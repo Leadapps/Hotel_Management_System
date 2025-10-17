@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Hotel Management System</title>
+  <link rel="stylesheet" href="/style.css">
+  </head>
+<body>
+  <div class="auth-wrapper">
+    <div class="auth-card">
+      <h2 id="formTitle">🏨 Hotel Management System</h2>
+
+      <div class="auth-tabs">
+        <button id="employeeTabBtn" class="tab-btn active" onclick="showForm('loginForm')">Staff Login</button>
+        <button id="guestTabBtn" class="tab-btn" onclick="showForm('guestLoginForm')">Guest Booking</button>
+      </div>
+
+      <div id="loginForm" class="auth-form">
+        <h3>Staff Login</h3>
+        <input type="text" id="loginUsername" placeholder="Username" autocomplete="username" autofocus>
+        <input type="password" id="loginPassword" placeholder="Password" autocomplete="current-password">
+        <button onclick="login()" type="button">Login</button>
+      </div>
+      
+      <div id="guestLoginForm" class="auth-form" style="display:none;">
+        <h3 id="guestBookingTitle">Book a Room</h3>
+        
+        <div id="guestStep1">
+            <div style="display: flex; width: 100%; gap: 5px; margin-bottom: 10px;">
+              <select id="guestCountryCode" style="width: 35%;">
+                <option value="+91" selected>India (+91)</option>
+                </select>
+              <input type="tel" id="guestMobile" placeholder="Mobile Number" autocomplete="tel" maxlength="10" style="width: 65%;">
+            </div>
+            <button onclick="sendGuestOtp()" type="button" style="width: 100%;">Send OTP</button>
+        </div>
+        
+        <div id="guestStep2" style="display:none;">
+            <input type="text" id="guestOtp" placeholder="Enter 6-digit OTP" autocomplete="one-time-code" maxlength="6">
+            <button onclick="verifyGuestOtp()" type="button">Verify OTP</button>
+        </div>
+
+        <div id="guestStep3" style="display:none;">
+            <h4>Booking Details</h4>
+            <div id="roomAvailability" style="background: #e9f5ff; padding: 10px; border-radius: 6px; margin-bottom: 15px; text-align: left; font-size: 14px;"></div>
+            <input type="text" id="onlineGuestName" placeholder="Your Full Name" required>
+            <select id="onlineRoomType" required>
+                <option value="">Select Room Type</option>
+            </select>
+            <button onclick="bookRoomOnline()" type="button">Book My Room</button> 
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+  <script src="/script.js"></script>
+</body>
+</html>
