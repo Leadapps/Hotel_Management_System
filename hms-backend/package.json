@@ -1,0 +1,19 @@
+{
+  "name": "hms-backend",
+  "version": "1.0.0",
+  "description": "",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "cors": "^2.8.5",
+    "dotenv": "^17.2.3",
+    "express": "^4.19.2",
+    "oracledb": "^6.5.1",
+    "twilio": "^5.10.3"
+  }
+}
