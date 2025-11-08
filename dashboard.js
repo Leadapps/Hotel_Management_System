@@ -4,7 +4,7 @@ if (!user) window.location.href = "index.html";
 document.getElementById('userInfo').textContent = `${user.fullName} (${user.role})`;
 document.getElementById('sidebarHotelName').textContent = user.hotelName || 'Hotel';
 
-const API_BASE_URL = 'https://hotel-management-system.vercel.app/api';
+const API_BASE_URL = 'http://localhost:3000/api';
 
 // --- APP STATE ---
 let editingRoomNumber = null;

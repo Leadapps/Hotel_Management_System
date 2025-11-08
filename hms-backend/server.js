@@ -3,10 +3,12 @@ const express = require('express');
 require('dotenv').config(); // Load environment variables from .env file
 const oracledb = require('oracledb');
 const cors = require('cors');
-const path = require('path'); // <-- KEEP THIS
 
 // --- Oracle Instant Client Initialization ---
 try {
+  // For Windows (uncomment and adjust path if needed)
+  // oracledb.initOracleClient({ libDir: "C:\\oracle\\instantclient_21_3" });
+  
   console.log("Oracle Client initialization attempted.");
 } catch (err) {
   console.error("Oracle Instant Client initialization warning:", err.message);
@@ -22,35 +24,31 @@ const dbConfig = {
 
 // --- Server Configuration ---
 const app = express();
+const port = 3000;
 
-// ✅ IMPORTANT FOR RENDER:
-const PORT = process.env.PORT || 3000;
-
-// Twilio (optional)
+// Twilio Configuration - Loads credentials from the .env file
 const twilioAccountSid = process.env.TWILIO_ACCOUNT_SID;
 const twilioAuthToken = process.env.TWILIO_AUTH_TOKEN;
 const twilioPhoneNumber = process.env.TWILIO_PHONE_NUMBER;
 const twilioClient = require('twilio')(twilioAccountSid, twilioAuthToken);
 
+
 // Middleware
 app.use(cors());
 app.use(express.json());
 
-// Serve Static Files
-app.use(express.static(path.join(__dirname, '..')));
-
-// In-memory OTP store
+// In-memory store for OTP simulation. In production, use a more robust solution like Redis.
 const otpStore = {};
 
-// Public Booking Route (serves guest.html)
-app.get('/book/:hotelName', (req, res) => {
-  res.sendFile(path.join(__dirname, '..', 'guest.html'));
+// Health check endpoint
+app.get('/', (req, res) => {
+    res.json({ status: 'Server is running', timestamp: new Date() });
 });
 
-// ✅ Health Check (Required by Render)
-app.get('/healthz', (req, res) => {
-  res.json({ status: 'ok' });
-});ss
+app.get('/api/health', (req, res) => {
+    res.json({ status: 'API is healthy' });
+});
+
 // --- Database & Server Initialization ---
 async function startServer() {
     let pool;
@@ -116,39 +114,27 @@ async function startServer() {
                 return res.status(400).json({ message: 'Guest name, country code, mobile, room type, and hotel are required.' });
             }
 
-            // --- ⭐️ NEW: Check if hotel exists before booking ---
+            const checkinOtp = Math.floor(100000 + Math.random() * 900000).toString();
+            // Log the check-in OTP for simulation purposes
+            console.log(`\n--- 🔑 Check-in OTP for booking by ${guestName} (${mobileNumber}) is: ${checkinOtp} ---\n`);
+
+            const sql = `INSERT INTO hms_online_bookings (guest_name, country_code, mobile_number, room_type, otp, hotel_name) 
+                         VALUES (:guestName, :countryCode, :mobileNumber, :roomType, :otp, :hotelName)
+                         RETURNING booking_id INTO :bookingId`;
+            
+            const bind = {
+                guestName,
+                countryCode,
+                mobileNumber,
+                roomType,
+                otp: checkinOtp,
+                hotelName,
+                bookingId: { type: oracledb.NUMBER, dir: oracledb.BIND_OUT }
+            };
+
             let connection;
             try {
                 connection = await pool.getConnection();
-
-                const hotelCheck = await connection.execute(
-                    `SELECT COUNT(*) AS count FROM hms_users WHERE hotel_name = :hotelName AND ROWNUM = 1`,
-                    { hotelName }
-                );
-        
-                if (hotelCheck.rows[0][0] === 0) {
-                     // Using ROWS[0][0] for COUNT(*)
-                    return res.status(404).json({ message: 'This hotel does not exist.' });
-                }
-
-                const checkinOtp = Math.floor(100000 + Math.random() * 900000).toString();
-                // Log the check-in OTP for simulation purposes
-                console.log(`\n--- 🔑 Check-in OTP for booking by ${guestName} (${mobileNumber}) is: ${checkinOtp} ---\n`);
-
-                const sql = `INSERT INTO hms_online_bookings (guest_name, country_code, mobile_number, room_type, otp, hotel_name) 
-                            VALUES (:guestName, :countryCode, :mobileNumber, :roomType, :otp, :hotelName)
-                            RETURNING booking_id INTO :bookingId`;
-                
-                const bind = {
-                    guestName,
-                    countryCode,
-                    mobileNumber,
-                    roomType,
-                    otp: checkinOtp,
-                    hotelName,
-                    bookingId: { type: oracledb.NUMBER, dir: oracledb.BIND_OUT }
-                };
-
                 const result = await connection.execute(sql, bind, { autoCommit: true });
                 const bookingId = result.outBinds.bookingId[0];
                 res.status(201).json({ 
@@ -855,8 +841,7 @@ async function startServer() {
         // --- Start the Express Server ---
         app.listen(port, () => {
             console.log(`🚀 Server running on http://localhost:${port}`);
-            console.log(`✅ Staff login available at http://localhost:${port}/index.html`);
-            console.log(`✅ Guest booking example: http://localhost:${port}/book/Your-Hotel-Name`);
+            console.log(`✅ Health check available at http://localhost:${port}/api/health`);
         });
 
     } catch (err) {
