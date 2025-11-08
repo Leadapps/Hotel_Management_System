@@ -3,13 +3,10 @@ const express = require('express');
 require('dotenv').config(); // Load environment variables from .env file
 const oracledb = require('oracledb');
 const cors = require('cors');
-const path = require('path'); // <-- ADD THIS LINE
+const path = require('path'); // <-- KEEP THIS
 
 // --- Oracle Instant Client Initialization ---
 try {
-  // For Windows (uncomment and adjust path if needed)
-  // oracledb.initOracleClient({ libDir: "C:\\oracle\\instantclient_21_3" });
-  
   console.log("Oracle Client initialization attempted.");
 } catch (err) {
   console.error("Oracle Instant Client initialization warning:", err.message);
@@ -25,42 +22,35 @@ const dbConfig = {
 
 // --- Server Configuration ---
 const app = express();
-const port = 3000;
 
-// Twilio Configuration - Loads credentials from the .env file
+// ✅ IMPORTANT FOR RENDER:
+const PORT = process.env.PORT || 3000;
+
+// Twilio (optional)
 const twilioAccountSid = process.env.TWILIO_ACCOUNT_SID;
 const twilioAuthToken = process.env.TWILIO_AUTH_TOKEN;
 const twilioPhoneNumber = process.env.TWILIO_PHONE_NUMBER;
 const twilioClient = require('twilio')(twilioAccountSid, twilioAuthToken);
 
-
 // Middleware
 app.use(cors());
 app.use(express.json());
 
-// --- ⭐️ NEW: SERVE STATIC FILES ---
-// This serves files like index.html, style.css, etc., from the PARENT directory
-// (e.g., C:\Users\143ch\Hotel_Management_System)
+// Serve Static Files
 app.use(express.static(path.join(__dirname, '..')));
 
-// In-memory store for OTP simulation.
+// In-memory OTP store
 const otpStore = {};
 
-// --- ⭐️ NEW: GUEST BOOKING ROUTE ---
-// This dynamic route catches any URL like /book/Some-Hotel-Name
-// and serves the new guest.html file.
+// Public Booking Route (serves guest.html)
 app.get('/book/:hotelName', (req, res) => {
-    // We just serve the file. The JavaScript (guest.js) in that file
-    // will handle getting the hotel name from the URL.
-    res.sendFile(path.join(__dirname, '..', 'guest.html'));
+  res.sendFile(path.join(__dirname, '..', 'guest.html'));
 });
 
-
-// Health check endpoint (MOVED - now part of API routes)
-app.get('/api/health', (req, res) => {
-    res.json({ status: 'API is healthy' });
-});
-
+// ✅ Health Check (Required by Render)
+app.get('/healthz', (req, res) => {
+  res.json({ status: 'ok' });
+});ss
 // --- Database & Server Initialization ---
 async function startServer() {
     let pool;
