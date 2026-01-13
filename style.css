@@ -97,6 +97,15 @@ body, html {
 .sidebar ul {
   list-style: none;
   padding: 0;
+  flex-grow: 1;
+  overflow-y: auto;
+  scrollbar-width: none;
+  display: flex;
+  flex-direction: column;
+}
+
+.sidebar ul::-webkit-scrollbar {
+  display: none;
 }
 
 .sidebar ul li {
@@ -503,3 +512,172 @@ input:checked + .slider:before {
 .slider.round:before {
   border-radius: 50%;
 }
+
+/* LOADING SPINNER */
+.loader {
+  border: 4px solid #f3f3f3;
+  border-top: 4px solid #007bff;
+  border-radius: 50%;
+  width: 30px;
+  height: 30px;
+  animation: spin 1s linear infinite;
+  margin: 10px auto;
+}
+@keyframes spin {
+  0% { transform: rotate(0deg); }
+  100% { transform: rotate(360deg); }
+}
+
+/* SIDE PHOTO MODALS */
+.side-modal {
+  position: fixed;
+  top: 0;
+  bottom: 0;
+  width: 250px;
+  background: rgba(255, 255, 255, 0.95);
+  box-shadow: 0 0 15px rgba(0,0,0,0.2);
+  z-index: 1000;
+  overflow-y: auto;
+  padding: 20px;
+  display: none; /* Hidden by default */
+  flex-direction: column;
+  gap: 15px;
+}
+
+.side-modal.left { left: 0; border-right: 1px solid #ddd; }
+.side-modal.right { right: 0; border-left: 1px solid #ddd; }
+
+.side-modal img {
+  width: 100%;
+  height: auto;
+  border-radius: 8px;
+  box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+  object-fit: cover;
+}
+
+/* CAROUSEL ANIMATION */
+.carousel-slide {
+  position: absolute; /* Stack images on top of each other */
+  top: 20px; /* Match padding of container */
+  left: 20px;
+  right: 20px;
+  width: calc(100% - 40px);
+  opacity: 0;
+  transition: opacity 1s ease-in-out;
+}
+
+.carousel-slide.active {
+  opacity: 1;
+  position: relative; /* Keep flow for the first active one if needed, or handle via JS height */
+  top: 0; left: 0; right: 0; width: 100%; /* Reset for relative flow */
+}
+
+/* DASHBOARD PHOTO EDIT */
+.photo-edit-container {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin: 10px 0;
+}
+.photo-wrapper {
+  position: relative;
+  width: 80px;
+  height: 80px;
+}
+.photo-wrapper img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  border-radius: 4px;
+  border: 1px solid #ddd;
+}
+.photo-delete-btn {
+  position: absolute;
+  top: -8px;
+  right: -8px;
+  background: #dc3545;
+  color: white;
+  border: none;
+  border-radius: 50%;
+  width: 20px;
+  height: 20px;
+  font-size: 12px;
+  line-height: 1;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+}
+
+/* FULL SCREEN VIEWER */
+.fullscreen-viewer {
+  display: none;
+  position: fixed;
+  z-index: 2000;
+  left: 0;
+  top: 0;
+  width: 100%;
+  height: 100%;
+  overflow: auto;
+  background-color: rgba(0,0,0,0.9);
+  justify-content: center;
+  align-items: center;
+}
+
+.viewer-content {
+  margin: auto;
+  display: block;
+  max-width: 100%;
+  max-height: 100%;
+  width: auto;
+  height: auto;
+  object-fit: contain;
+  animation: zoomIn 0.3s;
+}
+
+.close-viewer {
+  position: absolute;
+  top: 15px;
+  right: 35px;
+  color: #f1f1f1;
+  font-size: 40px;
+  font-weight: bold;
+  transition: 0.3s;
+  cursor: pointer;
+  z-index: 2001;
+}
+
+.close-viewer:hover,
+.close-viewer:focus {
+  color: #bbb;
+  text-decoration: none;
+  cursor: pointer;
+}
+
+@keyframes zoomIn {
+  from {transform:scale(0)} 
+  to {transform:scale(1)}
+}
+
+.prev-btn, .next-btn {
+  position: absolute;
+  top: 50%;
+  transform: translateY(-50%);
+  background-color: rgba(0, 0, 0, 0.5);
+  color: white;
+  border: none;
+  font-size: 40px;
+  padding: 20px;
+  cursor: pointer;
+  z-index: 2002;
+  transition: 0.3s;
+  user-select: none;
+}
+
+.prev-btn:hover, .next-btn:hover {
+  background-color: rgba(0, 0, 0, 0.8);
+}
+
+.prev-btn { left: 0; border-radius: 0 5px 5px 0; }
+.next-btn { right: 0; border-radius: 5px 0 0 5px; }

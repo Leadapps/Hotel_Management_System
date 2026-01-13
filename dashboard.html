@@ -16,12 +16,14 @@
     <p class="user-info" id="userInfo"></p>
     <ul>
       <li id="roomsNav" class="active" onclick="openTab('rooms', this)"><i class="fa-solid fa-bed"></i> <span>Rooms</span></li>
+      <li id="availabilityNav" onclick="openTab('availability', this)"><i class="fa-solid fa-door-open"></i> <span>Availability</span></li>
       <li id="checkinNav" onclick="openTab('guests', this)"><i class="fa-solid fa-user"></i> <span>Check-in</span></li>
       <li id="onlineBookingsNav" onclick="openTab('onlineBookings', this)"><i class="fa-solid fa-globe"></i> <span>Online Bookings</span></li>
       <li id="bookingsNav" onclick="openTab('bookings', this)"><i class="fa-solid fa-list-check"></i> <span>Bookings</span></li>
       <li id="billingNav" onclick="openTab('billing', this)"><i class="fa-solid fa-receipt"></i> <span>Check-out</span></li>
       <li id="historyNav" onclick="openTab('history', this)"><i class="fa-solid fa-clock-rotate-left"></i> <span>History</span></li>
       <li id="accessNav" onclick="openTab('access', this)"><i class="fa-solid fa-user-shield"></i> <span>Access</span></li>
+      <li onclick="openChangePasswordModal()"><i class="fa-solid fa-key"></i> <span>Change Password</span></li>
       <li onclick="logout()"><i class="fa-solid fa-right-from-bracket"></i> <span>Logout</span></li>
     </ul>
   </div>
@@ -52,6 +54,35 @@
           <tr><th>Type</th><th>Room No.</th><th>Cost/Hour</th><th>Cost/Day</th><th>Discount</th><th>Actions</th></tr>
         </thead>
         <tbody id="roomTable"></tbody>
+      </table>
+    </div>
+
+    <div id="availability" class="tab-content">
+      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px;">
+        <h2>Room Availability Status</h2>
+        <button class="main-btn" onclick="renderAvailability()" style="font-size: 14px; padding: 8px 12px;"><i class="fa-solid fa-rotate"></i> Refresh</button>
+      </div>
+      
+      <div style="display: flex; gap: 20px; margin-bottom: 20px; flex-wrap: wrap;">
+          <div style="background: #e3f2fd; padding: 20px; border-radius: 8px; flex: 1; text-align: center; min-width: 150px; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
+              <h3 style="margin: 0 0 10px 0; color: #0277bd;">Total Rooms</h3>
+              <p id="statTotalRooms" style="font-size: 28px; font-weight: bold; margin: 0;">0</p>
+          </div>
+          <div style="background: #e8f5e9; padding: 20px; border-radius: 8px; flex: 1; text-align: center; min-width: 150px; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
+              <h3 style="margin: 0 0 10px 0; color: #2e7d32;">Available</h3>
+              <p id="statAvailableRooms" style="font-size: 28px; font-weight: bold; margin: 0; color: #2e7d32;">0</p>
+          </div>
+          <div style="background: #ffebee; padding: 20px; border-radius: 8px; flex: 1; text-align: center; min-width: 150px; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
+              <h3 style="margin: 0 0 10px 0; color: #c62828;">Occupied</h3>
+              <p id="statOccupiedRooms" style="font-size: 28px; font-weight: bold; margin: 0; color: #c62828;">0</p>
+          </div>
+      </div>
+      
+      <table>
+        <thead>
+          <tr><th>Room Type</th><th>Total</th><th>Available</th><th>Occupied</th><th>Available Room Numbers</th></tr>
+        </thead>
+        <tbody id="availabilityTable"></tbody>
       </table>
     </div>
 
@@ -383,17 +414,17 @@
     <div id="access" class="tab-content">
       <h2>Employee Access Management</h2>
       <p>Control which sections employees can access and modify.</p>
-      <button class="main-btn" id="createAccountBtn" onclick="openCreateAccountModal()" style="margin-bottom: 15px;">
-        <i class="fa-solid fa-user-plus"></i> Create Account
-      </button>
+      <input type="text" id="accessSearch" onkeyup="filterAccessTable()" placeholder="Search for names or emails..." style="width: 100%; margin-bottom: 15px; padding: 10px; border: 1px solid #ccc; border-radius: 6px; box-sizing: border-box;">
       <table>
         <thead>
           <tr>
             <th>Employee Name</th>
+            <th>Email</th>
             <th>Address</th>
             <th>Manage Rooms (Add/Edit/Delete)</th>
             <th>Add Guests (Check-in)</th>
             <th>Edit Guests</th>
+            <th>Actions</th>
           </tr>
         </thead>
         <tbody id="accessTable"></tbody>
