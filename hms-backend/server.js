@@ -1,5 +1,7 @@
 // Import required packages
 const express = require('express');
+const fs = require('fs');
+const util = require('util');
 require('dotenv').config(); // Load environment variables from .env file
 const oracledb = require('oracledb');
 const cors = require('cors');
@@ -22,14 +24,112 @@ try {
 
 // --- Database Connection Configuration ---
 const dbConfig = {
-    user: "hotel_admin",
-    password: "myStrongPassword",
-    connectString: "localhost:1521/XEPDB1"
+    user: process.env.DB_USER || "hotel_admin",
+    password: process.env.DB_PASSWORD || "myStrongPassword",
+    connectString: process.env.DB_CONNECT_STRING || "localhost:1521/XEPDB1"
 };
 
 // --- Server Configuration ---
 const app = express();
-const port = 3000;
+const port = process.env.PORT || 3000;
+
+// --- Real-time Logging Configuration ---
+const LOG_DIR = path.join(__dirname, 'logs');
+if (!fs.existsSync(LOG_DIR)) {
+    fs.mkdirSync(LOG_DIR);
+}
+
+const LOG_FILE = path.join(LOG_DIR, 'app.log');
+const ERROR_FILE = path.join(LOG_DIR, 'error.log');
+const MAX_LOG_SIZE = 5 * 1024 * 1024; // 5MB
+const LOG_RETENTION_DAYS = 30;
+
+function cleanupOldLogs() {
+    fs.readdir(LOG_DIR, (err, files) => {
+        if (err) {
+            process.stdout.write(`[System] Failed to read log directory for cleanup: ${err.message}\n`);
+            return;
+        }
+
+        const now = Date.now();
+        const retentionMs = LOG_RETENTION_DAYS * 24 * 60 * 60 * 1000;
+
+        files.forEach(file => {
+            if (file === 'app.log' || file === 'error.log') return; // Skip active log files
+            const filePath = path.join(LOG_DIR, file);
+            fs.stat(filePath, (err, stats) => {
+                if (err) return;
+
+                if (now - stats.mtime.getTime() > retentionMs) {
+                    fs.unlink(filePath, (err) => {
+                        if (err) {
+                            process.stdout.write(`[System] Failed to delete old log file ${file}: ${err.message}\n`);
+                        } else {
+                            process.stdout.write(`[System] Deleted old log file: ${file}\n`);
+                        }
+                    });
+                }
+            });
+        });
+    });
+}
+
+// Schedule cleanup every 24 hours
+setInterval(cleanupOldLogs, 24 * 60 * 60 * 1000);
+// Run cleanup on startup
+cleanupOldLogs();
+
+function rotateLogFile(filePath) {
+    try {
+        if (fs.existsSync(filePath)) {
+            const stats = fs.statSync(filePath);
+            if (stats.size >= MAX_LOG_SIZE) {
+                const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+                const rotatedPath = `${filePath}.${timestamp}`;
+                fs.renameSync(filePath, rotatedPath);
+                process.stdout.write(`[System] Rotated log file: ${path.basename(filePath)} -> ${path.basename(rotatedPath)}\n`);
+            }
+        }
+    } catch (err) {
+        process.stdout.write(`Failed to rotate log file: ${err.message}\n`);
+    }
+}
+
+function writeLog(level, message) {
+    rotateLogFile(LOG_FILE);
+    if (level === 'ERROR') rotateLogFile(ERROR_FILE);
+
+    const timestamp = new Date().toISOString();
+    const logEntry = `[${timestamp}] [${level}] ${message}\n`;
+    
+    // Write to general log file
+    fs.appendFile(LOG_FILE, logEntry, (err) => {
+        if (err) process.stdout.write(`Failed to write to log file: ${err.message}\n`);
+    });
+
+    // Write to error log file if it's an error
+    if (level === 'ERROR') {
+        fs.appendFile(ERROR_FILE, logEntry, (err) => {
+            if (err) process.stdout.write(`Failed to write to error file: ${err.message}\n`);
+        });
+    }
+}
+
+// Override console methods to capture all logs to file
+const originalLog = console.log;
+const originalError = console.error;
+
+console.log = function(...args) {
+    const msg = util.format(...args);
+    writeLog('INFO', msg);
+    originalLog.apply(console, args);
+};
+
+console.error = function(...args) {
+    const msg = util.format(...args);
+    writeLog('ERROR', msg);
+    originalError.apply(console, args);
+};
 
 // --- Email Configuration (Nodemailer) ---
 const transporter = nodemailer.createTransport({
@@ -85,6 +185,16 @@ app.use(cors());
 app.use(express.json({ limit: '50mb' })); // Increased limit for room photos
 app.use(express.urlencoded({ limit: '50mb', extended: true }));
 
+// --- HTTP Request Logger Middleware ---
+app.use((req, res, next) => {
+    const start = Date.now();
+    res.on('finish', () => {
+        const duration = Date.now() - start;
+        console.log(`[HTTP] ${req.method} ${req.originalUrl} ${res.statusCode} - ${duration}ms - IP: ${req.ip}`);
+    });
+    next();
+});
+
 // In-memory store for OTP simulation. In production, use a more robust solution like Redis.
 const otpStore = {};
 // In-memory store for Password Reset Tokens
@@ -100,22 +210,186 @@ app.get('/api/health', (req, res) => {
 // --- Database & Server Initialization ---
 async function startServer() {
     let pool;
-    try {
-        const maxRetries = 5;
-        const retryDelay = 5000; // 5 seconds
+    let apiEnabled = true;
+    let server;
+    
+    // Define granular API controls
+    const apiGroups = {
+        'Guest Management API': { enabled: true, paths: ['/api/guests', '/api/guest'] },
+        'Room Operations API': { enabled: true, paths: ['/api/rooms'] },
+        'Booking System API': { enabled: true, paths: ['/api/online-bookings'] },
+        'Billing & History API': { enabled: true, paths: ['/api/billing', '/api/history'] },
+        'Food & Dining API': { enabled: true, paths: ['/api/food-orders', '/api/menu'] },
+        'Service Requests API': { enabled: true, paths: ['/api/service-requests', '/api/maintenance'] },
+        'User Management API': { enabled: true, paths: ['/api/users', '/api/register'] },
+        'Hotel Information API': { enabled: true, paths: ['/api/hotels', '/api/hotel'] },
+        'Notifications & Broadcasts API': { enabled: true, paths: ['/api/notifications', '/api/broadcast', '/api/owner/broadcast'] },
+        'Password Recovery API': { enabled: true, paths: ['/api/auth'] },
+        'Admin Operations API': { enabled: true, paths: ['/api/admin'] }
+    };
 
-        for (let i = 0; i < maxRetries; i++) {
-            try {
-                console.log(`Attempting to create Oracle connection pool (Attempt ${i + 1}/${maxRetries})...`);
-                pool = await oracledb.createPool(dbConfig);
-                console.log("✅ Oracle Database connection pool created successfully.");
-                break;
-            } catch (err) {
-                if (i === maxRetries - 1) throw err;
-                console.error(`❌ Connection failed: ${err.message}. Retrying in ${retryDelay / 1000}s...`);
-                await new Promise(resolve => setTimeout(resolve, retryDelay));
+    // Helper function to initialize or re-initialize the database pool
+    const initDb = async () => {
+        try {
+            if (pool) {
+                try { await pool.close(); } catch (e) { console.error("Error closing old pool:", e.message); }
+            }
+            console.log("Attempting to connect to Oracle Database...");
+            pool = await oracledb.createPool(dbConfig);
+            console.log("✅ Oracle Database connection pool created successfully.");
+            return true;
+        } catch (err) {
+            console.error("❌ Database Connection Failed:", err.message);
+            return false;
+        }
+    };
+
+    // Helper to ensure DB Schema supports multi-hotel features
+    const checkAndMigrateSchema = async () => {
+        let connection;
+        try {
+            connection = await pool.getConnection();
+            // Try adding hotel_name to food_menu
+            try { await connection.execute("ALTER TABLE food_menu ADD hotel_name VARCHAR2(100)"); console.log("✅ Schema updated: Added hotel_name to food_menu"); } catch (e) { /* Ignore if exists */ }
+            
+            // Try adding hotel_name to food_orders
+            try { await connection.execute("ALTER TABLE food_orders ADD hotel_name VARCHAR2(100)"); console.log("✅ Schema updated: Added hotel_name to food_orders"); } catch (e) { /* Ignore if exists */ }
+            
+            // Try adding hotel_name to hms_rooms
+            try { await connection.execute("ALTER TABLE hms_rooms ADD hotel_name VARCHAR2(100)"); console.log("✅ Schema updated: Added hotel_name to hms_rooms"); } catch (e) { /* Ignore if exists */ }
+            try { await connection.execute("ALTER TABLE hms_rooms ADD photos CLOB"); console.log("✅ Schema updated: Added photos to hms_rooms"); } catch (e) { /* Ignore if exists */ }
+
+            // Try adding hotel_name to hms_guests
+            try { await connection.execute("ALTER TABLE hms_guests ADD hotel_name VARCHAR2(100)"); console.log("✅ Schema updated: Added hotel_name to hms_guests"); } catch (e) { /* Ignore if exists */ }
+            // Try adding address and verification details to hms_guests if missing
+            try { await connection.execute("ALTER TABLE hms_guests ADD address VARCHAR2(255)"); console.log("✅ Schema updated: Added address to hms_guests"); } catch (e) { }
+            try { await connection.execute("ALTER TABLE hms_guests ADD verification_id_type VARCHAR2(50)"); console.log("✅ Schema updated: Added verification_id_type to hms_guests"); } catch (e) { }
+            try { await connection.execute("ALTER TABLE hms_guests ADD verification_id VARCHAR2(100)"); console.log("✅ Schema updated: Added verification_id to hms_guests"); } catch (e) { }
+
+            // Try adding hotel_name to hms_online_bookings
+            try { await connection.execute("ALTER TABLE hms_online_bookings ADD hotel_name VARCHAR2(100)"); console.log("✅ Schema updated: Added hotel_name to hms_online_bookings"); } catch (e) { /* Ignore if exists */ }
+            try { await connection.execute("ALTER TABLE hms_online_bookings ADD mobile_number VARCHAR2(20)"); console.log("✅ Schema updated: Added mobile_number to hms_online_bookings"); } catch (e) { }
+            try { await connection.execute("ALTER TABLE hms_online_bookings ADD country_code VARCHAR2(10)"); console.log("✅ Schema updated: Added country_code to hms_online_bookings"); } catch (e) { }
+
+            // Try adding hotel_name to hms_bill_history
+            try { await connection.execute("ALTER TABLE hms_bill_history ADD hotel_name VARCHAR2(100)"); console.log("✅ Schema updated: Added hotel_name to hms_bill_history"); } catch (e) { /* Ignore if exists */ }
+
+            // Data Migration: Set default hotel for existing records with NULL hotel_name
+            const defaultHotel = 'HMS_GLOBAL'; 
+            try { await connection.execute(`UPDATE hms_rooms SET hotel_name = '${defaultHotel}' WHERE hotel_name IS NULL`); } catch (e) {}
+            try { await connection.execute(`UPDATE hms_guests SET hotel_name = '${defaultHotel}' WHERE hotel_name IS NULL`); } catch (e) {}
+            try { await connection.execute(`UPDATE food_menu SET hotel_name = '${defaultHotel}' WHERE hotel_name IS NULL`); } catch (e) {}
+            try { await connection.execute(`UPDATE food_orders SET hotel_name = '${defaultHotel}' WHERE hotel_name IS NULL`); } catch (e) {}
+            try { await connection.execute(`UPDATE hms_bill_history SET hotel_name = '${defaultHotel}' WHERE hotel_name IS NULL`); } catch (e) {}
+            try { await connection.execute(`UPDATE hms_online_bookings SET hotel_name = '${defaultHotel}' WHERE hotel_name IS NULL`); } catch (e) {}
+            
+            // Try adding hotel_name to hms_users and migrate data
+            try { await connection.execute("ALTER TABLE hms_users ADD hotel_name VARCHAR2(100)"); console.log("✅ Schema updated: Added hotel_name to hms_users"); } catch (e) { /* Ignore if exists */ }
+            try { await connection.execute(`UPDATE hms_users SET hotel_name = '${defaultHotel}' WHERE hotel_name IS NULL`); } catch (e) {}
+            try { await connection.execute("ALTER TABLE hms_users ADD profile_picture CLOB"); console.log("✅ Schema updated: Added profile_picture to hms_users"); } catch (e) {}
+            try { await connection.execute("ALTER TABLE hms_users ADD read_notifications CLOB"); console.log("✅ Schema updated: Added read_notifications to hms_users"); } catch (e) {}
+            try { await connection.execute("ALTER TABLE hms_users ADD address VARCHAR2(255)"); console.log("✅ Schema updated: Added address to hms_users"); } catch (e) {}
+
+            // Try creating hms_broadcasts table
+            try { 
+                await connection.execute(`
+                    CREATE TABLE hms_broadcasts (
+                        id NUMBER GENERATED ALWAYS AS IDENTITY, 
+                        message VARCHAR2(4000), 
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, 
+                        is_active NUMBER(1) DEFAULT 1
+                    )
+                `); 
+                console.log("✅ Schema updated: Created hms_broadcasts table"); 
+            } catch (e) { /* Ignore if exists */ }
+
+            // Try adding hotel_name to hms_broadcasts for Owner->Staff broadcasts
+            try { await connection.execute("ALTER TABLE hms_broadcasts ADD hotel_name VARCHAR2(100)"); console.log("✅ Schema updated: Added hotel_name to hms_broadcasts"); } catch (e) { /* Ignore if exists */ }
+
+            // Try adding hotel_name to service_requests
+            try { await connection.execute("ALTER TABLE service_requests ADD hotel_name VARCHAR2(100)"); console.log("✅ Schema updated: Added hotel_name to service_requests"); } catch (e) { /* Ignore if exists */ }
+
+            // Try creating maintenance_logs table
+            try { 
+                await connection.execute(`
+                    CREATE TABLE maintenance_logs (
+                        id NUMBER GENERATED ALWAYS AS IDENTITY, 
+                        room_number VARCHAR2(50),
+                        item_name VARCHAR2(100),
+                        description VARCHAR2(4000),
+                        priority VARCHAR2(20) DEFAULT 'Medium',
+                        status VARCHAR2(20) DEFAULT 'Reported',
+                        reported_by VARCHAR2(100),
+                        hotel_name VARCHAR2(100),
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    )
+                `); 
+                console.log("✅ Schema updated: Created maintenance_logs table"); 
+            } catch (e) { /* Ignore if exists */ }
+
+            // Try adding photo to maintenance_logs
+            try { await connection.execute("ALTER TABLE maintenance_logs ADD photo CLOB"); console.log("✅ Schema updated: Added photo to maintenance_logs"); } catch (e) { /* Ignore if exists */ }
+
+            // Try creating hms_lost_found table
+            try { 
+                await connection.execute(`
+                    CREATE TABLE hms_lost_found (
+                        id NUMBER GENERATED ALWAYS AS IDENTITY, 
+                        item_name VARCHAR2(100), 
+                        description VARCHAR2(4000), 
+                        found_location VARCHAR2(100),
+                        found_by VARCHAR2(100),
+                        status VARCHAR2(20) DEFAULT 'Found',
+                        claimed_by VARCHAR2(100),
+                        date_found TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        date_claimed TIMESTAMP,
+                        hotel_name VARCHAR2(100)
+                    )
+                `); 
+                console.log("✅ Schema updated: Created hms_lost_found table"); 
+            } catch (e) { /* Ignore if exists */ }
+
+            // Food Menu Migrations
+            try { await connection.execute("ALTER TABLE food_menu ADD image_url CLOB"); console.log("✅ Schema updated: Added image_url to food_menu"); } catch (e) {}
+            try { await connection.execute("ALTER TABLE food_menu ADD category VARCHAR2(100)"); console.log("✅ Schema updated: Added category to food_menu"); } catch (e) {}
+            try { await connection.execute("ALTER TABLE food_menu ADD is_available NUMBER(1) DEFAULT 1"); console.log("✅ Schema updated: Added is_available to food_menu"); } catch (e) {}
+
+            // User Settings Migrations
+            try { await connection.execute("ALTER TABLE hms_users ADD is_dark_mode NUMBER(1) DEFAULT 0"); console.log("✅ Schema updated: Added is_dark_mode"); } catch (e) {}
+            try { await connection.execute("ALTER TABLE hms_users ADD notification_volume NUMBER(3,2) DEFAULT 1.0"); console.log("✅ Schema updated: Added notification_volume"); } catch (e) {}
+            try { await connection.execute("ALTER TABLE hms_users ADD notification_sound CLOB"); console.log("✅ Schema updated: Added notification_sound"); } catch (e) {}
+            try { await connection.execute("ALTER TABLE hms_users ADD last_read_broadcast VARCHAR2(4000)"); console.log("✅ Schema updated: Added last_read_broadcast"); } catch (e) {}
+
+        } catch (err) {
+            console.error("Schema Migration Warning:", err.message);
+        } finally {
+            if (connection) await connection.close();
+        }
+    };
+
+    // --- API Control Middleware ---
+    app.use((req, res, next) => {
+        // Allow control routes and health check always
+        if (req.path.startsWith('/api/admin/control') || req.path === '/api/health' || req.path === '/api/login' || req.path === '/api/admin/system-health') {
+            return next();
+        }
+        if (!apiEnabled && req.path.startsWith('/api')) {
+            return res.status(503).json({ message: 'System is in maintenance mode. APIs are stopped.' });
+        }
+        
+        // Granular check
+        for (const [groupName, config] of Object.entries(apiGroups)) {
+            if (!config.enabled && config.paths.some(p => req.path.startsWith(p))) {
+                return res.status(503).json({ message: `${groupName} is currently disabled.` });
             }
         }
+        next();
+    });
+
+    try {
+        // Attempt initial connection (non-blocking for server start)
+        await initDb();
+        if (pool) await checkAndMigrateSchema();
 
         // --- Configuration Validation ---
         if (!process.env.EMAIL_USER || !process.env.EMAIL_PASS) {
@@ -233,6 +507,9 @@ async function startServer() {
 
         app.get('/api/online-bookings', async (req, res) => {
             const { hotelName } = req.query;
+            if (!hotelName || hotelName === 'null' || hotelName === 'undefined') {
+                return res.json([]);
+            }
             const sql = `SELECT booking_id, guest_name, email, room_type 
                          FROM hms_online_bookings 
                          WHERE hotel_name = :hotelName AND booking_status = 'Booked' 
@@ -295,7 +572,7 @@ async function startServer() {
         });
 
         app.post('/api/online-bookings/confirm', async (req, res) => {
-            const { bookingId, guestOtp, hotelName, age, gender, verificationIdType, verificationId } = req.body;
+            const { bookingId, guestOtp, hotelName, age, gender, verificationIdType, verificationId, mobile, address } = req.body;
             let connection;
             try {
                 connection = await pool.getConnection();
@@ -339,17 +616,19 @@ async function startServer() {
                     { outFormat: oracledb.OUT_FORMAT_OBJECT }
                 );
                 const checkInSql = `INSERT INTO hms_guests (guest_name, country_code, mobile_number, email, room_number, check_in_time, hotel_name, gender, age, address, verification_id_type, verification_id) 
-                                    VALUES (:name, '+00', '0000000000', :email, :room, :checkIn, :hotel, :gender, :age, 'Online Booking', :verificationIdType, :verificationId)`;
+                                    VALUES (:name, :countryCode, :mobile, :email, :room, :checkIn, :hotel, :gender, :age, :address, :verificationIdType, :verificationId)`;
                 
                 await connection.execute(checkInSql, {
                     name: booking.GUEST_NAME,
-                    // countryCode and mobile are removed from input, passing empty strings
+                    countryCode: '+91', // Defaulting to +91 as UI sends combined or raw mobile
+                    mobile: mobile || '0000000000',
                     email: bookingDetails.rows[0].EMAIL,
                     room: assignedRoom,
                     checkIn: new Date(),
                     hotel: hotelName,
                     gender: gender,
                     age: age,
+                    address: address || 'Online Booking',
                     verificationIdType: verificationIdType,
                     verificationId: verificationId
                 });
@@ -611,13 +890,14 @@ async function startServer() {
                 return res.status(400).json({ message: 'Username and password are required.' });
             }
             
-            const sql = `SELECT user_id, full_name, username, role, address, hotel_name, email, mobile_number, perm_manage_rooms, perm_add_guests, perm_edit_guests 
+            const sql = `SELECT user_id, full_name, username, role, address, hotel_name, email, mobile_number, profile_picture, perm_manage_rooms, perm_add_guests, perm_edit_guests, is_dark_mode, notification_volume, notification_sound, last_read_broadcast, read_notifications 
                          FROM hms_users WHERE username = :username AND password = :password`;
             let connection;
             try {
                 connection = await pool.getConnection();
                 const result = await connection.execute(sql, { username, password }, { 
-                    outFormat: oracledb.OUT_FORMAT_OBJECT
+                    outFormat: oracledb.OUT_FORMAT_OBJECT,
+                    fetchInfo: { PROFILE_PICTURE: { type: oracledb.STRING }, NOTIFICATION_SOUND: { type: oracledb.STRING }, READ_NOTIFICATIONS: { type: oracledb.STRING } }
                 });
                 
                 if (result.rows.length > 0) {
@@ -631,11 +911,17 @@ async function startServer() {
                         hotelName: dbUser.HOTEL_NAME,
                         email: dbUser.EMAIL,
                         mobile: dbUser.MOBILE_NUMBER,
+                        profilePicture: dbUser.PROFILE_PICTURE,
                         permissions: {
                             manageRooms: dbUser.PERM_MANAGE_ROOMS === 1,
                             addGuests: dbUser.PERM_ADD_GUESTS === 1,
                             editGuests: dbUser.PERM_EDIT_GUESTS === 1
-                        }
+                        },
+                        isDarkMode: dbUser.IS_DARK_MODE === 1,
+                        notificationVolume: dbUser.NOTIFICATION_VOLUME !== null ? dbUser.NOTIFICATION_VOLUME : 1.0,
+                        notificationSound: dbUser.NOTIFICATION_SOUND,
+                        lastReadBroadcast: dbUser.LAST_READ_BROADCAST,
+                        readNotifications: dbUser.READ_NOTIFICATIONS
                     };
                     console.log("Login successful for:", username);
                     res.json(user);
@@ -727,6 +1013,57 @@ async function startServer() {
         });
 
         // --- Admin Routes ---
+        // Reconnect Database Endpoint
+        app.post('/api/admin/system-health/reconnect-db', async (req, res) => {
+            const success = await initDb();
+            if (success) {
+                res.json({ message: 'Database connection established successfully.' });
+            } else {
+                res.status(500).json({ message: 'Failed to connect to database. Check server logs.' });
+            }
+        });
+
+        // System Health Endpoint
+        app.get('/api/admin/system-health', async (req, res) => {
+            let dbStatus = 'Disconnected';
+            let connection;
+            try {
+                if (pool) {
+                    connection = await pool.getConnection();
+                    await connection.execute('SELECT 1 FROM DUAL');
+                    dbStatus = 'Connected';
+                }
+            } catch (err) {
+                console.error("Health Check DB Error:", err);
+                dbStatus = 'Error: ' + err.message;
+            } finally {
+                if (connection) {
+                    try {
+                        await connection.close();
+                    } catch (e) {
+                        console.error("Error closing health check connection", e);
+                    }
+                }
+            }
+
+            // Define subsystems status based on DB connection
+            const subsystems = [
+                { name: 'Authentication Module', status: dbStatus === 'Connected' ? 'Operational' : 'Degraded' },
+                ...Object.keys(apiGroups).map(name => ({
+                    name: name,
+                    status: !apiEnabled ? 'Stopped (Global)' : (apiGroups[name].enabled ? (dbStatus === 'Connected' ? 'Operational' : 'Degraded') : 'Stopped')
+                }))
+            ];
+
+            res.json({
+                apiStatus: 'Running',
+                dbStatus: dbStatus,
+                uptime: process.uptime(),
+                timestamp: new Date(),
+                subsystems: subsystems
+            });
+        });
+
         // Get All Owners
         app.get('/api/admin/owners', async (req, res) => {
             const sql = `SELECT user_id, full_name, email, mobile_number, hotel_name, address FROM hms_users WHERE role = 'Owner' ORDER BY hotel_name`;
@@ -746,15 +1083,305 @@ async function startServer() {
         // Delete Owner
         app.delete('/api/admin/owners/:user_id', async (req, res) => {
             const { user_id } = req.params;
-            const sql = `DELETE FROM hms_users WHERE user_id = :user_id AND role = 'Owner'`;
             let connection;
             try {
                 connection = await pool.getConnection();
-                const result = await connection.execute(sql, { user_id }, { autoCommit: true });
-                res.json({ message: result.rowsAffected === 0 ? 'Owner not found.' : 'Owner deleted successfully.' });
+                
+                // 1. Get the hotel name for this owner
+                const ownerResult = await connection.execute(
+                    `SELECT hotel_name FROM hms_users WHERE user_id = :user_id AND role = 'Owner'`,
+                    { user_id },
+                    { outFormat: oracledb.OUT_FORMAT_OBJECT }
+                );
+
+                if (ownerResult.rows.length === 0) {
+                    return res.status(404).json({ message: 'Owner not found.' });
+                }
+
+                const hotelName = ownerResult.rows[0].HOTEL_NAME;
+
+                // 2. Delete all users associated with this hotel (including the owner)
+                const result = await connection.execute(
+                    `DELETE FROM hms_users WHERE hotel_name = :hotelName`,
+                    { hotelName },
+                    { autoCommit: true }
+                );
+                
+                res.json({ message: `Owner and ${result.rowsAffected - 1} associated accounts deleted successfully.` });
             } catch (err) {
                 console.error("Delete Owner Error:", err);
-                res.status(500).json({ message: 'Failed to delete owner.' });
+                res.status(500).json({ message: 'Failed to delete owner and associated accounts.' });
+            } finally {
+                if (connection) await connection.close();
+            }
+        });
+
+        // Broadcast Message (Admin to Owners)
+        app.post('/api/admin/broadcast', async (req, res) => {
+            const { message } = req.body;
+            if (!message) return res.status(400).json({ message: 'Message content is required.' });
+            
+            let connection;
+            try {
+                connection = await pool.getConnection();
+                // Deactivate old messages so only the latest is shown
+                await connection.execute(`UPDATE hms_broadcasts SET is_active = 0 WHERE hotel_name IS NULL`, {}, { autoCommit: false });
+                
+                // Insert new message
+                await connection.execute(
+                    `INSERT INTO hms_broadcasts (message, is_active, hotel_name) VALUES (:message, 1, NULL)`,
+                    { message },
+                    { autoCommit: true }
+                );
+                res.json({ message: 'Broadcast sent successfully.' });
+            } catch (err) {
+                console.error("Broadcast Error:", err);
+                if (connection) await connection.rollback();
+                res.status(500).json({ message: 'Failed to send broadcast.' });
+            } finally {
+                if (connection) await connection.close();
+            }
+        });
+
+        app.get('/api/broadcast', async (req, res) => {
+            let connection;
+            try {
+                connection = await pool.getConnection();
+                const result = await connection.execute(
+                    `SELECT message, created_at FROM hms_broadcasts WHERE is_active = 1 AND hotel_name IS NULL ORDER BY id DESC FETCH FIRST 1 ROWS ONLY`,
+                    [],
+                    { outFormat: oracledb.OUT_FORMAT_OBJECT }
+                );
+                if (result.rows.length > 0) {
+                    res.json(result.rows[0]);
+                } else {
+                    res.json(null);
+                }
+            } catch (err) {
+                console.error("Get Broadcast Error:", err);
+                res.status(500).json({ message: 'Failed to fetch broadcast.' });
+            } finally {
+                if (connection) await connection.close();
+            }
+        });
+
+        // Owner Broadcast (Owner to Staff)
+        app.post('/api/owner/broadcast', async (req, res) => {
+            const { message, hotelName } = req.body;
+            if (!message || !hotelName) return res.status(400).json({ message: 'Message and Hotel Name are required.' });
+            
+            let connection;
+            try {
+                connection = await pool.getConnection();
+                // Deactivate old messages for this hotel
+                await connection.execute(`UPDATE hms_broadcasts SET is_active = 0 WHERE hotel_name = :hotelName`, { hotelName }, { autoCommit: false });
+                
+                // Insert new message
+                await connection.execute(
+                    `INSERT INTO hms_broadcasts (message, is_active, hotel_name) VALUES (:message, 1, :hotelName)`,
+                    { message, hotelName },
+                    { autoCommit: true }
+                );
+                res.json({ message: 'Broadcast sent to staff successfully.' });
+            } catch (err) {
+                console.error("Owner Broadcast Error:", err);
+                if (connection) await connection.rollback();
+                res.status(500).json({ message: 'Failed to send broadcast.' });
+            } finally {
+                if (connection) await connection.close();
+            }
+        });
+
+        app.get('/api/hotel/broadcast', async (req, res) => {
+            const { hotelName } = req.query;
+            if (!hotelName) return res.json(null);
+
+            let connection;
+            try {
+                connection = await pool.getConnection();
+                const result = await connection.execute(
+                    `SELECT message, created_at FROM hms_broadcasts WHERE hotel_name = :hotelName AND is_active = 1 ORDER BY id DESC FETCH FIRST 1 ROWS ONLY`,
+                    { hotelName },
+                    { outFormat: oracledb.OUT_FORMAT_OBJECT }
+                );
+                if (result.rows.length > 0) {
+                    res.json(result.rows[0]);
+                } else {
+                    res.json(null);
+                }
+            } catch (err) {
+                console.error("Get Hotel Broadcast Error:", err);
+                res.status(500).json({ message: 'Failed to fetch broadcast.' });
+            } finally {
+                if (connection) await connection.close();
+            }
+        });
+
+        // --- Backup & Restore Routes ---
+        app.get('/api/admin/backup', async (req, res) => {
+            let connection;
+            try {
+                connection = await pool.getConnection();
+                const tables = ['HMS_USERS', 'HMS_ROOMS', 'HMS_GUESTS', 'HMS_ONLINE_BOOKINGS', 'HMS_BILL_HISTORY', 'FOOD_MENU', 'FOOD_ORDERS', 'SERVICE_REQUESTS', 'HMS_BROADCASTS'];
+                const backupData = {};
+
+                for (const table of tables) {
+                    // Fetch all data
+                    const result = await connection.execute(`SELECT * FROM ${table}`, [], { outFormat: oracledb.OUT_FORMAT_OBJECT });
+                    backupData[table] = result.rows;
+                }
+
+                res.json(backupData);
+            } catch (err) {
+                console.error("Backup failed:", err);
+                res.status(500).json({ message: "Backup failed." });
+            } finally {
+                if (connection) await connection.close();
+            }
+        });
+
+        app.post('/api/admin/restore', async (req, res) => {
+            const backupData = req.body;
+            if (!backupData || Object.keys(backupData).length === 0) {
+                return res.status(400).json({ message: "Invalid backup data." });
+            }
+
+            let connection;
+            try {
+                connection = await pool.getConnection();
+                
+                // Order matters for Foreign Keys: Delete children first, Insert parents first
+                const deleteOrder = ['FOOD_ORDERS', 'HMS_BILL_HISTORY', 'HMS_GUESTS', 'HMS_ONLINE_BOOKINGS', 'SERVICE_REQUESTS', 'HMS_ROOMS', 'FOOD_MENU', 'HMS_BROADCASTS', 'HMS_USERS'];
+                const insertOrder = ['HMS_USERS', 'HMS_ROOMS', 'FOOD_MENU', 'HMS_BROADCASTS', 'HMS_ONLINE_BOOKINGS', 'HMS_GUESTS', 'HMS_BILL_HISTORY', 'FOOD_ORDERS', 'SERVICE_REQUESTS'];
+
+                // 1. Clear Data
+                for (const table of deleteOrder) {
+                    try { await connection.execute(`DELETE FROM ${table}`); } catch(e) { console.log(`Warning clearing ${table}: ${e.message}`); }
+                }
+
+                // 2. Insert Data
+                for (const table of insertOrder) {
+                    const rows = backupData[table];
+                    if (rows && rows.length > 0) {
+                        const columns = Object.keys(rows[0]);
+                        // Create :0, :1, :2 placeholders
+                        const placeholders = columns.map((_, i) => `:${i}`).join(', ');
+                        const sql = `INSERT INTO ${table} (${columns.join(', ')}) VALUES (${placeholders})`;
+                        
+                        const binds = rows.map(row => {
+                            return columns.map(col => {
+                                const val = row[col];
+                                // Convert ISO date strings back to Date objects for Oracle
+                                if (typeof val === 'string' && /^\d{4}-\d{2}-\d{2}T/.test(val)) return new Date(val);
+                                return val;
+                            });
+                        });
+
+                        await connection.executeMany(sql, binds, { autoCommit: false });
+                    }
+                }
+
+                await connection.commit();
+                res.json({ message: "Database restored successfully." });
+            } catch (err) {
+                console.error("Restore failed:", err);
+                if (connection) await connection.rollback();
+                res.status(500).json({ message: "Restore failed: " + err.message });
+            } finally {
+                if (connection) await connection.close();
+            }
+        });
+
+        // --- Global Search & Notifications ---
+        app.get('/api/admin/search', async (req, res) => {
+            const { q } = req.query;
+            if (!q) return res.json([]);
+            const search = `%${q.toLowerCase()}%`;
+            
+            let connection;
+            try {
+                connection = await pool.getConnection();
+                const sql = `
+                    SELECT 'Guest' as type, guest_name as name, hotel_name, room_number as info, mobile_number as contact, NULL as id
+                    FROM hms_guests 
+                    WHERE LOWER(guest_name) LIKE :search OR mobile_number LIKE :search OR LOWER(email) LIKE :search
+                    UNION ALL
+                    SELECT 'Booking' as type, guest_name as name, hotel_name, room_type as info, email as contact, booking_id as id
+                    FROM hms_online_bookings
+                    WHERE (LOWER(guest_name) LIKE :search OR LOWER(email) LIKE :search OR TO_CHAR(booking_id) LIKE :search)
+                    FETCH FIRST 20 ROWS ONLY
+                `;
+                const result = await connection.execute(sql, { search }, { outFormat: oracledb.OUT_FORMAT_OBJECT });
+                res.json(result.rows);
+            } catch (err) {
+                console.error("Global Search Error:", err);
+                res.status(500).json({ message: 'Search failed.' });
+            } finally {
+                if (connection) await connection.close();
+            }
+        });
+
+        app.get('/api/notifications', async (req, res) => {
+            const { role, hotelName } = req.query;
+            let connection;
+            try {
+                connection = await pool.getConnection();
+                let notifications = [];
+
+                if (role === 'Admin') {
+                    // Admin sees new bookings from all hotels
+                    const result = await connection.execute(
+                        `SELECT 'New Booking' as title, guest_name || ' (' || hotel_name || ')' as message, booking_id as id
+                         FROM hms_online_bookings WHERE booking_status = 'Booked' ORDER BY booking_id DESC FETCH FIRST 10 ROWS ONLY`,
+                        [], { outFormat: oracledb.OUT_FORMAT_OBJECT }
+                    );
+                    notifications = result.rows;
+                } else if (role === 'Owner' || role === 'Manager') {
+                    // Owner sees new bookings for their hotel
+                    if (hotelName) {
+                        const result = await connection.execute(
+                            `SELECT 'New Booking' as title, guest_name as message, booking_id as id
+                             FROM hms_online_bookings WHERE hotel_name = :hotelName AND booking_status = 'Booked' ORDER BY booking_id DESC FETCH FIRST 10 ROWS ONLY`,
+                            { hotelName }, { outFormat: oracledb.OUT_FORMAT_OBJECT }
+                        );
+                        notifications = result.rows;
+                    }
+                } else if (role === 'Chef') {
+                    // Chef sees Pending food orders
+                    if (hotelName) {
+                        const result = await connection.execute(
+                            `SELECT 'New Order' as title, 'Room ' || room_number as message, id
+                             FROM food_orders WHERE hotel_name = :hotelName AND status = 'Pending' ORDER BY created_at DESC FETCH FIRST 10 ROWS ONLY`,
+                            { hotelName }, { outFormat: oracledb.OUT_FORMAT_OBJECT }
+                        );
+                        notifications = result.rows;
+                    }
+                } else if (role === 'Waiter') {
+                    // Waiter sees Prepared food orders
+                    if (hotelName) {
+                        const result = await connection.execute(
+                            `SELECT 'Order Ready' as title, 'Room ' || room_number as message, id
+                             FROM food_orders WHERE hotel_name = :hotelName AND status = 'Prepared' ORDER BY created_at DESC FETCH FIRST 10 ROWS ONLY`,
+                            { hotelName }, { outFormat: oracledb.OUT_FORMAT_OBJECT }
+                        );
+                        notifications = result.rows;
+                    }
+                } else if (role === 'Housekeeping') {
+                    // Housekeeping sees Pending service requests
+                    if (hotelName) {
+                         const result = await connection.execute(
+                            `SELECT 'Service Request' as title, 'Room ' || room_number || ': ' || request_type as message, id
+                             FROM service_requests WHERE hotel_name = :hotelName AND status = 'Pending' ORDER BY created_at DESC FETCH FIRST 10 ROWS ONLY`,
+                            { hotelName }, { outFormat: oracledb.OUT_FORMAT_OBJECT }
+                        );
+                        notifications = result.rows;
+                    }
+                }
+
+                res.json(notifications);
+            } catch (err) {
+                console.error("Notification Error:", err);
+                res.status(500).json({ message: 'Failed to fetch notifications.' });
             } finally {
                 if (connection) await connection.close();
             }
@@ -762,6 +1389,9 @@ async function startServer() {
 
         app.get('/api/users', async (req, res) => {
             const { hotelName } = req.query;
+            if (!hotelName || hotelName === 'null' || hotelName === 'undefined') {
+                return res.json([]);
+            }
             const sql = `SELECT user_id, full_name, username, email, mobile_number, role, address, hotel_name, perm_manage_rooms, perm_add_guests, perm_edit_guests 
                          FROM hms_users WHERE role != 'Owner' AND hotel_name = :hotelName ORDER BY full_name`;
             let connection;
@@ -779,14 +1409,14 @@ async function startServer() {
 
         app.get('/api/users/:username', async (req, res) => {
             const { username } = req.params;
-            const sql = `SELECT user_id, full_name, username, role, address, hotel_name, email, mobile_number, profile_picture, perm_manage_rooms, perm_add_guests, perm_edit_guests 
+            const sql = `SELECT user_id, full_name, username, role, address, hotel_name, email, mobile_number, profile_picture, perm_manage_rooms, perm_add_guests, perm_edit_guests, is_dark_mode, notification_volume, notification_sound, last_read_broadcast, read_notifications 
                          FROM hms_users WHERE username = :username`;
             let connection;
             try {
                 connection = await pool.getConnection();
                 const result = await connection.execute(sql, { username }, { 
                     outFormat: oracledb.OUT_FORMAT_OBJECT,
-                    fetchInfo: { PROFILE_PICTURE: { type: oracledb.STRING } }
+                    fetchInfo: { PROFILE_PICTURE: { type: oracledb.STRING }, NOTIFICATION_SOUND: { type: oracledb.STRING }, READ_NOTIFICATIONS: { type: oracledb.STRING } }
                 });
                 
                 if (result.rows.length > 0) {
@@ -805,7 +1435,12 @@ async function startServer() {
                             manageRooms: dbUser.PERM_MANAGE_ROOMS === 1,
                             addGuests: dbUser.PERM_ADD_GUESTS === 1,
                             editGuests: dbUser.PERM_EDIT_GUESTS === 1
-                        }
+                        },
+                        isDarkMode: dbUser.IS_DARK_MODE === 1,
+                        notificationVolume: dbUser.NOTIFICATION_VOLUME !== null ? dbUser.NOTIFICATION_VOLUME : 1.0,
+                        notificationSound: dbUser.NOTIFICATION_SOUND,
+                        lastReadBroadcast: dbUser.LAST_READ_BROADCAST,
+                        readNotifications: dbUser.READ_NOTIFICATIONS
                     };
                     res.json(user);
                 } else {
@@ -843,7 +1478,7 @@ async function startServer() {
         // Update User Details (Profile Picture, Personal Info)
         app.put('/api/users/:user_id', async (req, res) => {
             const { user_id } = req.params;
-            const { fullName, email, mobile, address, role, profilePicture } = req.body;
+            const { fullName, email, mobile, address, role, profilePicture, isDarkMode, notificationVolume, notificationSound, lastReadBroadcast, readNotifications } = req.body;
             
             // Build dynamic query based on provided fields
             let updates = [];
@@ -855,6 +1490,11 @@ async function startServer() {
             if (address) { updates.push("address = :address"); binds.address = address; }
             if (role) { updates.push("role = :role"); binds.role = role; }
             if (profilePicture !== undefined) { updates.push("profile_picture = :profilePicture"); binds.profilePicture = profilePicture; }
+            if (isDarkMode !== undefined) { updates.push("is_dark_mode = :isDarkMode"); binds.isDarkMode = isDarkMode ? 1 : 0; }
+            if (notificationVolume !== undefined) { updates.push("notification_volume = :notificationVolume"); binds.notificationVolume = notificationVolume; }
+            if (notificationSound !== undefined) { updates.push("notification_sound = :notificationSound"); binds.notificationSound = notificationSound; }
+            if (lastReadBroadcast !== undefined) { updates.push("last_read_broadcast = :lastReadBroadcast"); binds.lastReadBroadcast = lastReadBroadcast; }
+            if (readNotifications !== undefined) { updates.push("read_notifications = :readNotifications"); binds.readNotifications = readNotifications; }
 
             if (updates.length === 0) return res.status(400).json({ message: "No fields to update." });
 
@@ -970,7 +1610,11 @@ async function startServer() {
         // --- Room Routes ---
         app.get('/api/rooms', async (req, res) => {
             const { hotelName } = req.query;
-            const sql = `SELECT room_id, room_type, room_number, cost_per_hour, cost_per_day, discount_percent, photos FROM hms_rooms WHERE hotel_name = :hotelName ORDER BY room_number`;
+            if (!hotelName || hotelName === 'null' || hotelName === 'undefined') {
+                return res.json([]);
+            }
+            // OPTIMIZATION: Exclude 'photos' column from the list view to reduce payload size significantly
+            const sql = `SELECT room_id, room_type, room_number, cost_per_hour, cost_per_day, discount_percent FROM hms_rooms WHERE hotel_name = :hotelName ORDER BY room_number`;
             let connection;
             try {
                 connection = await pool.getConnection();
@@ -979,6 +1623,28 @@ async function startServer() {
             } catch (err) {
                 console.error("Get Rooms Error:", err);
                 res.status(500).json({ message: 'Failed to fetch rooms.' });
+            } finally {
+                if (connection) await connection.close();
+            }
+        });
+
+        // New Endpoint: Get Single Room Details (including photos)
+        app.get('/api/rooms/:room_number', async (req, res) => {
+            const { room_number } = req.params;
+            const { hotelName } = req.query;
+            const sql = `SELECT * FROM hms_rooms WHERE room_number = :room_number AND hotel_name = :hotelName`;
+            let connection;
+            try {
+                connection = await pool.getConnection();
+                const result = await connection.execute(sql, { room_number, hotelName }, { outFormat: oracledb.OUT_FORMAT_OBJECT });
+                if (result.rows.length > 0) {
+                    res.json(result.rows[0]);
+                } else {
+                    res.status(404).json({ message: 'Room not found.' });
+                }
+            } catch (err) {
+                console.error("Get Room Details Error:", err);
+                res.status(500).json({ message: 'Failed to fetch room details.' });
             } finally {
                 if (connection) await connection.close();
             }
@@ -1069,6 +1735,9 @@ async function startServer() {
         // --- Guest Routes ---
         app.get('/api/guests', async (req, res) => {
             const { hotelName } = req.query;
+            if (!hotelName || hotelName === 'null' || hotelName === 'undefined') {
+                return res.json([]);
+            }
             const sql = `SELECT g.guest_id, g.guest_name, g.age, g.gender, g.country_code, g.mobile_number, g.email, g.room_number, g.check_in_time, g.address, g.verification_id_type, g.verification_id,
                                 r.room_type, r.cost_per_day, r.discount_percent
                          FROM hms_guests g
@@ -1248,12 +1917,38 @@ async function startServer() {
         });
 
         app.get('/api/history', async (req, res) => {
-            const { hotelName } = req.query;
-            const sql = `SELECT * FROM hms_bill_history WHERE hotel_name = :hotelName ORDER BY check_out_time DESC`;
+            const { hotelName, startDate, endDate, limit, roomNumber } = req.query;
+            if (!hotelName || hotelName === 'null' || hotelName === 'undefined') {
+                return res.json([]);
+            }
+            let sql = `SELECT * FROM hms_bill_history WHERE hotel_name = :hotelName`;
+            const binds = { hotelName };
+
+            // Server-side filtering for reports
+            if (startDate && endDate) {
+                // Assuming dates are passed as YYYY-MM-DD
+                sql += ` AND check_out_time >= TO_TIMESTAMP(:startDate, 'YYYY-MM-DD"T"HH24:MI:SS') 
+                         AND check_out_time <= TO_TIMESTAMP(:endDate, 'YYYY-MM-DD"T"HH24:MI:SS')`;
+                binds.startDate = startDate + 'T00:00:00';
+                binds.endDate = endDate + 'T23:59:59';
+            }
+
+            if (roomNumber) {
+                sql += ` AND room_number = :roomNumber`;
+                binds.roomNumber = roomNumber;
+            }
+
+            sql += ` ORDER BY check_out_time DESC`;
+
+            if (limit) {
+                sql += ` FETCH FIRST :limit ROWS ONLY`;
+                binds.limit = parseInt(limit);
+            }
+
             let connection;
             try {
                 connection = await pool.getConnection();
-                const result = await connection.execute(sql, { hotelName }, { outFormat: oracledb.OUT_FORMAT_OBJECT });
+                const result = await connection.execute(sql, binds, { outFormat: oracledb.OUT_FORMAT_OBJECT });
                 res.json(result.rows);
             } catch (err) {
                 console.error("Get History Error:", err);
@@ -1268,7 +1963,7 @@ async function startServer() {
             let connection;
             try {
                 connection = await pool.getConnection();
-                const { status, roomNumber } = req.query;
+                const { status, roomNumber, hotelName } = req.query;
                 
                 let query = 'SELECT id, room_number, items, total_cost, status, created_at FROM food_orders';
                 const conditions = [];
@@ -1281,6 +1976,10 @@ async function startServer() {
                 if (roomNumber) {
                     conditions.push("room_number = :roomNumber");
                     binds.roomNumber = roomNumber;
+                }
+                if (hotelName) {
+                    conditions.push("hotel_name = :hotelName");
+                    binds.hotelName = hotelName;
                 }
 
                 if (conditions.length > 0) {
@@ -1321,11 +2020,11 @@ async function startServer() {
             let connection;
             try {
                 connection = await pool.getConnection();
-                const { roomNumber, items, totalCost } = req.body;
+                const { roomNumber, items, totalCost, hotelName } = req.body;
                 
                 const sql = `
-                    INSERT INTO food_orders (room_number, items, total_cost, status)
-                    VALUES (:roomNumber, :items, :totalCost, 'Pending')
+                    INSERT INTO food_orders (room_number, items, total_cost, status, hotel_name)
+                    VALUES (:roomNumber, :items, :totalCost, 'Pending', :hotelName)
                     RETURNING id INTO :id
                 `;
                 
@@ -1333,6 +2032,7 @@ async function startServer() {
                     roomNumber,
                     items: JSON.stringify(items),
                     totalCost,
+                    hotelName: hotelName || '',
                     id: { type: oracledb.NUMBER, dir: oracledb.BIND_OUT }
                 }, { autoCommit: true });
 
@@ -1369,13 +2069,13 @@ async function startServer() {
 
         // --- Service Requests Routes ---
         app.post('/api/service-requests', async (req, res) => {
-            const { roomNumber, requestType, comments } = req.body;
+            const { roomNumber, requestType, comments, hotelName } = req.body;
             let connection;
             try {
                 connection = await pool.getConnection();
-                const sql = `INSERT INTO service_requests (room_number, request_type, comments, status) 
-                             VALUES (:roomNumber, :requestType, :comments, 'Pending')`;
-                await connection.execute(sql, { roomNumber, requestType, comments: comments || '' }, { autoCommit: true });
+                const sql = `INSERT INTO service_requests (room_number, request_type, comments, status, hotel_name) 
+                             VALUES (:roomNumber, :requestType, :comments, 'Pending', :hotelName)`;
+                await connection.execute(sql, { roomNumber, requestType, comments: comments || '', hotelName: hotelName || '' }, { autoCommit: true });
                 res.status(201).json({ message: 'Service request sent successfully.' });
             } catch (err) {
                 console.error("Service Request Error:", err);
@@ -1428,14 +2128,130 @@ async function startServer() {
             }
         });
 
-        // --- Menu Management Routes ---
-        app.get('/api/menu', async (req, res) => {
+        // --- Maintenance Logs Routes ---
+        app.get('/api/maintenance', async (req, res) => {
+            const { hotelName } = req.query;
             let connection;
             try {
                 connection = await pool.getConnection();
                 const result = await connection.execute(
-                    `SELECT id, name, price, image_url, NVL(is_available, 1) as is_available, category FROM food_menu ORDER BY category, name`,
-                    [],
+                    `SELECT * FROM maintenance_logs WHERE hotel_name = :hotelName ORDER BY CASE status WHEN 'Reported' THEN 1 WHEN 'In Progress' THEN 2 ELSE 3 END, created_at DESC`,
+                    { hotelName: hotelName || '' },
+                    { outFormat: oracledb.OUT_FORMAT_OBJECT }
+                );
+                res.json(result.rows);
+            } catch (err) {
+                console.error("Get Maintenance Error:", err);
+                res.status(500).json({ message: 'Failed to fetch maintenance logs.' });
+            } finally {
+                if (connection) await connection.close();
+            }
+        });
+
+        app.post('/api/maintenance', async (req, res) => {
+            const { roomNumber, itemName, description, priority, reportedBy, hotelName, photo } = req.body;
+            let connection;
+            try {
+                connection = await pool.getConnection();
+                await connection.execute(
+                    `INSERT INTO maintenance_logs (room_number, item_name, description, priority, reported_by, hotel_name, photo) VALUES (:roomNumber, :itemName, :description, :priority, :reportedBy, :hotelName, :photo)`,
+                    { roomNumber, itemName, description, priority, reportedBy, hotelName, photo: photo || null },
+                    { autoCommit: true }
+                );
+                res.status(201).json({ message: 'Maintenance issue reported.' });
+            } catch (err) {
+                console.error("Add Maintenance Error:", err);
+                res.status(500).json({ message: 'Failed to report issue.' });
+            } finally {
+                if (connection) await connection.close();
+            }
+        });
+
+        app.put('/api/maintenance/:id', async (req, res) => {
+            const { id } = req.params;
+            const { status } = req.body;
+            let connection;
+            try {
+                connection = await pool.getConnection();
+                await connection.execute(`UPDATE maintenance_logs SET status = :status WHERE id = :id`, { status, id }, { autoCommit: true });
+                res.json({ message: 'Status updated.' });
+            } catch (err) {
+                console.error("Update Maintenance Error:", err);
+                res.status(500).json({ message: 'Failed to update status.' });
+            } finally {
+                if (connection) await connection.close();
+            }
+        });
+
+        // --- Lost & Found Routes ---
+        app.get('/api/lost-found', async (req, res) => {
+            const { hotelName } = req.query;
+            let connection;
+            try {
+                connection = await pool.getConnection();
+                const result = await connection.execute(
+                    `SELECT * FROM hms_lost_found WHERE hotel_name = :hotelName ORDER BY date_found DESC`,
+                    { hotelName: hotelName || '' },
+                    { outFormat: oracledb.OUT_FORMAT_OBJECT }
+                );
+                res.json(result.rows);
+            } catch (err) {
+                console.error("Get Lost & Found Error:", err);
+                res.status(500).json({ message: 'Failed to fetch items.' });
+            } finally {
+                if (connection) await connection.close();
+            }
+        });
+
+        app.post('/api/lost-found', async (req, res) => {
+            const { itemName, description, location, foundBy, hotelName } = req.body;
+            let connection;
+            try {
+                connection = await pool.getConnection();
+                await connection.execute(
+                    `INSERT INTO hms_lost_found (item_name, description, found_location, found_by, hotel_name) VALUES (:itemName, :description, :location, :foundBy, :hotelName)`,
+                    { itemName, description, location, foundBy, hotelName },
+                    { autoCommit: true }
+                );
+                res.status(201).json({ message: 'Item recorded.' });
+            } catch (err) {
+                console.error("Add Lost & Found Error:", err);
+                res.status(500).json({ message: 'Failed to record item.' });
+            } finally {
+                if (connection) await connection.close();
+            }
+        });
+
+        app.put('/api/lost-found/:id', async (req, res) => {
+            const { id } = req.params;
+            const { status, claimedBy } = req.body;
+            let connection;
+            try {
+                connection = await pool.getConnection();
+                await connection.execute(
+                    `UPDATE hms_lost_found SET status = :status, claimed_by = :claimedBy, date_claimed = CURRENT_TIMESTAMP WHERE id = :id`,
+                    { status, claimedBy, id },
+                    { autoCommit: true }
+                );
+                res.json({ message: 'Item status updated.' });
+            } catch (err) {
+                console.error("Update Lost & Found Error:", err);
+                res.status(500).json({ message: 'Failed to update item.' });
+            } finally {
+                if (connection) await connection.close();
+            }
+        });
+
+        // --- Menu Management Routes ---
+        app.get('/api/menu', async (req, res) => {
+            const { hotelName } = req.query;
+            let connection;
+            try {
+                connection = await pool.getConnection();
+                // Filter by hotelName if provided, otherwise show all (or handle global items)
+                const result = await connection.execute(
+                    `SELECT id, name, price, image_url, NVL(is_available, 1) as is_available, category FROM food_menu WHERE hotel_name = :hotelName OR hotel_name IS NULL ORDER BY category, name`,
+                    { hotelName: hotelName || '' },
                     { outFormat: oracledb.OUT_FORMAT_OBJECT }
                 );
                 res.json(result.rows);
@@ -1448,13 +2264,13 @@ async function startServer() {
         });
 
         app.post('/api/menu', async (req, res) => {
-            const { name, price, imageUrl, category } = req.body;
+            const { name, price, imageUrl, category, hotelName } = req.body;
             let connection;
             try {
                 connection = await pool.getConnection();
                 await connection.execute(
-                    `INSERT INTO food_menu (name, price, image_url, category) VALUES (:name, :price, :imageUrl, :category)`,
-                    { name, price, imageUrl: imageUrl || '', category: category || 'Main Course' },
+                    `INSERT INTO food_menu (name, price, image_url, category, hotel_name) VALUES (:name, :price, :imageUrl, :category, :hotelName)`,
+                    { name, price, imageUrl: imageUrl || '', category: category || 'Main Course', hotelName: hotelName || '' },
                     { autoCommit: true }
                 );
                 res.status(201).json({ message: 'Menu item added.' });
@@ -1502,7 +2318,7 @@ async function startServer() {
 
         // Bulk Add Menu Items
         app.post('/api/menu/bulk', async (req, res) => {
-            const { items } = req.body; // Array of { name, price, category, imageUrl }
+            const { items, hotelName } = req.body; // Array of { name, price, category, imageUrl }
             if (!items || !Array.isArray(items) || items.length === 0) {
                 return res.status(400).json({ message: 'No items provided.' });
             }
@@ -1510,12 +2326,13 @@ async function startServer() {
             let connection;
             try {
                 connection = await pool.getConnection();
-                const sql = `INSERT INTO food_menu (name, price, image_url, category) VALUES (:name, :price, :imageUrl, :category)`;
+                const sql = `INSERT INTO food_menu (name, price, image_url, category, hotel_name) VALUES (:name, :price, :imageUrl, :category, :hotelName)`;
                 const binds = items.map(i => ({
                     name: i.name,
                     price: i.price,
                     imageUrl: i.imageUrl || '',
-                    category: i.category || 'Main Course'
+                    category: i.category || 'Main Course',
+                    hotelName: hotelName || ''
                 }));
 
                 const result = await connection.executeMany(sql, binds, { autoCommit: true });
@@ -1549,6 +2366,107 @@ async function startServer() {
             } finally {
                 if (connection) await connection.close();
             }
+        });
+
+        // --- System Control Routes ---
+        app.get('/api/admin/control/status', (req, res) => {
+            res.json({ api: apiEnabled, db: !!pool });
+        });
+
+        app.post('/api/admin/control/api', (req, res) => {
+            const { action, subsystem } = req.body;
+            
+            if (subsystem) {
+                // Granular control
+                if (apiGroups[subsystem]) {
+                    if (action === 'restart') {
+                        apiGroups[subsystem].enabled = false;
+                        setTimeout(() => { apiGroups[subsystem].enabled = true; }, 1500);
+                        res.json({ message: `${subsystem} restarting...` });
+                    } else {
+                        apiGroups[subsystem].enabled = (action === 'start');
+                        res.json({ message: `${subsystem} ${action === 'start' ? 'started' : 'stopped'}.` });
+                    }
+                } else {
+                    res.status(404).json({ message: 'Subsystem not found.' });
+                }
+            } else if (!subsystem) {
+                // Global control
+                if (action === 'restart') {
+                    apiEnabled = false;
+                    setTimeout(() => { apiEnabled = true; }, 1500);
+                    res.json({ message: 'All APIs restarting...' });
+                } else if (action === 'start') {
+                    apiEnabled = true;
+                    res.json({ message: 'APIs started successfully.' });
+                } else if (action === 'stop') {
+                    apiEnabled = false;
+                    res.json({ message: 'APIs stopped. Maintenance mode active.' });
+                } else {
+                    res.status(400).json({ message: 'Invalid action.' });
+                }
+            } else {
+                res.status(400).json({ message: 'Invalid action.' });
+            }
+        });
+
+        app.post('/api/admin/control/db', async (req, res) => {
+            const { action } = req.body;
+            if (action === 'restart') {
+                if (pool) {
+                    try { await pool.close(); } catch (e) { console.error("Error closing DB for restart:", e.message); }
+                    pool = null;
+                }
+                const success = await initDb();
+                if (success) res.json({ message: 'Database connection restarted.' });
+                else res.status(500).json({ message: 'Failed to restart database connection.' });
+            } else if (action === 'start') {
+                if (pool) return res.json({ message: 'Database is already connected.' });
+                const success = await initDb();
+                if (success) res.json({ message: 'Database connected successfully.' });
+                else res.status(500).json({ message: 'Failed to connect to database.' });
+            } else if (action === 'stop') {
+                if (pool) {
+                    try {
+                        await pool.close();
+                        pool = null;
+                        res.json({ message: 'Database connection closed.' });
+                    } catch (err) {
+                        res.status(500).json({ message: 'Error closing database: ' + err.message });
+                    }
+                } else {
+                    res.json({ message: 'Database is already disconnected.' });
+                }
+            } else {
+                res.status(400).json({ message: 'Invalid action.' });
+            }
+        });
+
+        app.post('/api/admin/control/server', (req, res) => {
+            const { action } = req.body;
+            if (action === 'stop') {
+                res.json({ message: 'Server shutting down...' });
+                setTimeout(() => closePoolAndExit(), 100);
+            } else {
+                res.status(400).json({ message: 'Only stop action is supported for server.' });
+            }
+        });
+
+        app.post('/api/admin/control/restart', (req, res) => {
+            res.json({ message: 'Server restarting...' });
+            
+            // Attempt to spawn a new process and exit the current one
+            setTimeout(() => {
+                const { spawn } = require('child_process');
+                if (process.argv[1]) {
+                    spawn(process.argv[0], process.argv.slice(1), {
+                        cwd: process.cwd(),
+                        detached: true,
+                        stdio: 'inherit'
+                    }).unref();
+                }
+                closePoolAndExit();
+            }, 1000);
         });
 
         // --- Setup Route (Dev only) ---
@@ -1641,7 +2559,7 @@ async function startServer() {
         });
 
         // --- Start the Express Server ---
-        const server = app.listen(port, () => {
+        server = app.listen(port, () => {
             console.log(`🚀 Server running on http://localhost:${port}`);
             console.log(`📂 Serving frontend from: ${path.join(__dirname, '../')}`);
             console.log(`✅ Health check available at http://localhost:${port}/api/health`);

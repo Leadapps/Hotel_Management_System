@@ -17,7 +17,7 @@ userInfoEl.onclick = showUserDetails;
 
 document.getElementById('sidebarHotelName').textContent = user.hotelName || 'Hotel';
 
-const API_BASE_URL = 'http://localhost:3000/api';
+const API_BASE_URL = '/api';
 
 // --- THEME MANAGEMENT ---
 function injectDarkModeStyles() {
@@ -28,11 +28,13 @@ function injectDarkModeStyles() {
         .dark-mode .sidebar ul li:hover, .dark-mode .sidebar ul li.active { background-color: #3a3b3c; }
         .dark-mode .main-content { background-color: #18191a; }
         .dark-mode .tab-content, .dark-mode .modal-content, .dark-mode .bill-card { background-color: #242526; color: #e4e6eb; box-shadow: 0 2px 10px rgba(0,0,0,0.5); }
+        .dark-mode .admin-toolbar, .dark-mode .owner-toolbar { background-color: #242526 !important; color: #e4e6eb; }
         .dark-mode table { background-color: #242526; color: #e4e6eb; }
         .dark-mode th { background-color: #3a3b3c; color: #fff; border-bottom: 1px solid #4e4f50; }
         .dark-mode td { border-bottom: 1px solid #3a3b3c; }
         .dark-mode input, .dark-mode select, .dark-mode textarea { background-color: #3a3b3c; color: #e4e6eb; border: 1px solid #4e4f50; }
         .dark-mode input::placeholder, .dark-mode textarea::placeholder { color: #b0b3b8; }
+        .dark-mode #adminNotifDropdown { background-color: #242526; border-color: #4e4f50; }
         .dark-mode option { background-color: #3a3b3c; color: #e4e6eb; }
         .dark-mode h1, .dark-mode h2, .dark-mode h3, .dark-mode h4, .dark-mode p, .dark-mode label { color: #e4e6eb; }
         
@@ -49,10 +51,21 @@ function injectDarkModeStyles() {
     document.head.appendChild(style);
 }
 
-function toggleDarkMode() {
-    document.body.classList.toggle('dark-mode');
-    const isDark = document.body.classList.contains('dark-mode');
-    localStorage.setItem('hmsDarkMode', isDark);
+async function toggleDarkMode() {
+    const isDark = !document.body.classList.contains('dark-mode');
+    document.body.classList.toggle('dark-mode', isDark);
+    
+    // Save to DB
+    try {
+        await fetch(`${API_BASE_URL}/users/${user.userId}`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ isDarkMode: isDark })
+        });
+        user.isDarkMode = isDark;
+        localStorage.setItem('hmsCurrentUser', JSON.stringify(user));
+    } catch(e) { console.error("Failed to save dark mode", e); }
+
     updateDarkModeButton(isDark);
 }
 
@@ -71,7 +84,38 @@ let previousKitchenOrderIds = new Set();
 let kitchenInitialized = false;
 let previousHousekeepingIds = new Set();
 let housekeepingInitialized = false;
-const notificationSound = new Audio('https://assets.mixkit.co/active_storage/sfx/2869/2869-preview.mp3');
+let knownNotificationIds = new Set();
+
+// Initialize read notifications from DB
+let readNotificationIds = new Set(); 
+if (user.readNotifications) {
+    try {
+        const savedReads = JSON.parse(user.readNotifications);
+        if (Array.isArray(savedReads)) readNotificationIds = new Set(savedReads);
+    } catch(e) { console.error("Error parsing read notifications", e); }
+}
+
+// Initialize sound with settings
+let notificationSound = new Audio();
+function loadNotificationSettings() {
+    if (user) {
+        notificationSound.src = user.notificationSound || 'https://assets.mixkit.co/active_storage/sfx/2869/2869-preview.mp3';
+        notificationSound.volume = user.notificationVolume !== undefined ? user.notificationVolume : 1.0;
+    }
+}
+loadNotificationSettings();
+
+let userInteracted = false;
+
+// Unlock audio context on first user interaction to prevent NotAllowedError
+document.addEventListener('click', function unlockAudio() {
+    userInteracted = true;
+    notificationSound.play().then(() => {
+        notificationSound.pause();
+        notificationSound.currentTime = 0;
+    }).catch(() => {});
+    document.removeEventListener('click', unlockAudio);
+}, { once: true });
 
 let allMenuItems = [];
 let currentMenuPage = 1;
@@ -97,6 +141,11 @@ async function applyUIPermissions() {
     if (user.role === 'Admin') {
         await setupAdminUI();
         return;
+    }
+
+    // Owner Role Setup: Add Toolbar
+    if (user.role === 'Owner') {
+        setupOwnerUI();
     }
 
     // Only owners see the Access Management tab
@@ -137,6 +186,9 @@ async function setupSpecialRoleUI() {
     const contents = document.querySelectorAll('.tab-content');
     contents.forEach(c => c.style.display = 'none');
 
+    // Add Staff Toolbar for Notifications
+    setupStaffToolbar();
+
     const sidebarList = document.querySelector('.sidebar ul');
     
     if (user.role === 'Chef') {
@@ -155,7 +207,7 @@ async function setupSpecialRoleUI() {
         document.querySelector('.main-content').appendChild(div);
         
         await renderKitchenOrders();
-        setInterval(renderKitchenOrders, 10000); // Auto-refresh
+        setInterval(() => renderKitchenOrders(true), 10000); // Auto-refresh (silent)
     }
     
     if (user.role === 'Waiter') {
@@ -174,7 +226,7 @@ async function setupSpecialRoleUI() {
         document.querySelector('.main-content').appendChild(div);
         
         await renderDeliveryOrders();
-        setInterval(renderDeliveryOrders, 10000); // Auto-refresh
+        setInterval(() => renderDeliveryOrders(true), 10000); // Auto-refresh (silent)
     }
 
     if (user.role === 'Housekeeping') {
@@ -193,96 +245,272 @@ async function setupSpecialRoleUI() {
         document.querySelector('.main-content').appendChild(div);
         
         await renderHousekeepingRequests();
-        setInterval(renderHousekeepingRequests, 10000); // Auto-refresh
+        setInterval(() => renderHousekeepingRequests(true), 10000); // Auto-refresh (silent)
+
+        // Add Maintenance Tab for Housekeeping
+        const liM = document.createElement('li');
+        liM.innerHTML = '<i class="fa-solid fa-screwdriver-wrench"></i> Maintenance';
+        liM.onclick = () => renderMaintenance();
+        sidebarList.appendChild(liM);
+
+        const divM = document.createElement('div');
+        divM.id = 'maintenanceContainer';
+        divM.className = 'tab-content';
+        divM.innerHTML = '<h2>Maintenance Log</h2><div id="maintenanceList">Loading...</div>';
+        document.querySelector('.main-content').appendChild(divM);
+
+        // Add Lost & Found Tab for Housekeeping
+        const liLF = document.createElement('li');
+        liLF.innerHTML = '<i class="fa-solid fa-magnifying-glass-location"></i> Lost & Found';
+        liLF.onclick = () => { openTab('lostFoundContainer', liLF); renderLostFound(); };
+        sidebarList.appendChild(liLF);
     }
 }
 
+function setupStaffToolbar() {
+    if (document.querySelector('.staff-toolbar')) return;
+    const mainContent = document.querySelector('.main-content');
+    const toolbar = document.createElement('div');
+    toolbar.className = 'staff-toolbar';
+    toolbar.style.cssText = 'display: flex; justify-content: flex-end; padding: 10px 0; margin-bottom: 10px;';
+    
+    // Add Notification Bell
+    const notifContainer = createNotificationElement('staffNotifBadge', 'staffNotifDropdown', 'staffNotifList');
+    toolbar.appendChild(notifContainer);
+
+    mainContent.insertBefore(toolbar, mainContent.firstChild);
+
+    // Start polling
+    fetchNotifications('staffNotifBadge', 'staffNotifList');
+    setInterval(() => fetchNotifications('staffNotifBadge', 'staffNotifList'), 30000);
+}
+
 async function setupAdminUI() {
-    // 1. Inject Hotel Selector in Sidebar
-    const sidebar = document.querySelector('.sidebar');
-    const header = sidebar.querySelector('h2');
+    // Prevent duplicate initialization
+    if (document.querySelector('.admin-toolbar')) return;
+
+    // 1. Create Admin Toolbar at the top of Main Content
+    const mainContent = document.querySelector('.main-content');
+    const toolbar = document.createElement('div');
+    toolbar.className = 'admin-toolbar';
+    toolbar.style.cssText = 'background: #fff; padding: 15px; margin-bottom: 20px; border-radius: 8px; box-shadow: 0 2px 5px rgba(0,0,0,0.05); display: flex; gap: 15px; align-items: center; flex-wrap: wrap;';
     
-    const selectorContainer = document.createElement('div');
-    selectorContainer.style.padding = '0 10px 15px 10px';
-    selectorContainer.style.borderBottom = '1px solid rgba(255,255,255,0.1)';
-    selectorContainer.style.marginBottom = '10px';
+    // Switch Hotel Button
+    const switchBtn = document.createElement('button');
+    switchBtn.id = 'adminHotelSwitchBtn';
+    switchBtn.className = 'main-btn';
+    switchBtn.style.backgroundColor = '#6c757d'; // Grey to differentiate
+    switchBtn.innerHTML = '<i class="fa-solid fa-hotel"></i> Select Hotel <i class="fa-solid fa-caret-down"></i>';
+    switchBtn.onclick = openHotelSelectionModal;
+    toolbar.appendChild(switchBtn);
 
-    const label = document.createElement('label');
-    label.textContent = 'Select Hotel:';
-    label.style.display = 'block';
-    label.style.fontSize = '12px';
-    label.style.marginBottom = '5px';
-    label.style.opacity = '0.8';
+    // Manage Owners Button
+    const ownerBtn = document.createElement('button');
+    ownerBtn.className = 'main-btn';
+    ownerBtn.innerHTML = '<i class="fa-solid fa-user-tie"></i> Manage Owners';
+    ownerBtn.onclick = function() { 
+        openTab('ownerManagementContainer', null); 
+        renderOwnerManagement(); 
+    };
+    toolbar.appendChild(ownerBtn);
 
-    const select = document.createElement('select');
-    select.id = 'adminHotelSelector';
-    select.style.width = '100%';
-    select.style.padding = '5px';
-    select.style.borderRadius = '4px';
-    select.style.border = 'none';
-    select.style.fontSize = '13px';
-    select.style.color = '#333';
+    // System Health Button
+    const healthBtn = document.createElement('button');
+    healthBtn.className = 'main-btn';
+    healthBtn.innerHTML = '<i class="fa-solid fa-heart-pulse"></i> System Health';
+    healthBtn.onclick = function() { 
+        openTab('systemHealthContainer', null); 
+        renderSystemHealth(); 
+    };
+    toolbar.appendChild(healthBtn);
 
-    selectorContainer.appendChild(label);
-    selectorContainer.appendChild(select);
-    
-    // Insert after the H2 header
-    header.parentNode.insertBefore(selectorContainer, header.nextSibling);
+    // Broadcast Button
+    const broadcastBtn = document.createElement('button');
+    broadcastBtn.className = 'main-btn';
+    broadcastBtn.innerHTML = '<i class="fa-solid fa-bullhorn"></i> Broadcast';
+    broadcastBtn.onclick = openBroadcastModal;
+    toolbar.appendChild(broadcastBtn);
 
-    // 2. Add "Manage Owners" Tab to Sidebar
-    const sidebarList = document.querySelector('.sidebar ul');
-    const ownerLi = document.createElement('li');
-    ownerLi.innerHTML = '<i class="fa-solid fa-user-tie"></i> Manage Owners';
-    ownerLi.onclick = function() { openTab('ownerManagementContainer', this); renderOwnerManagement(); };
-    // Insert at the top
-    sidebarList.insertBefore(ownerLi, sidebarList.firstChild);
+    // Backup & Restore Button
+    const backupBtn = document.createElement('button');
+    backupBtn.className = 'main-btn';
+    backupBtn.innerHTML = '<i class="fa-solid fa-database"></i> Backup & Restore';
+    backupBtn.onclick = function() { openTab('backupRestoreContainer', null); renderBackupRestore(); };
+    toolbar.appendChild(backupBtn);
 
-    // Create Container for Owner Management
-    const div = document.createElement('div');
-    div.id = 'ownerManagementContainer';
-    div.className = 'tab-content';
-    div.innerHTML = `
+    // Global Search Bar
+    const searchContainer = document.createElement('div');
+    searchContainer.style.cssText = 'position: relative; margin-left: auto; margin-right: 15px;';
+    searchContainer.innerHTML = `
+        <input type="text" id="globalSearchInput" placeholder="Search guests, bookings..." style="padding: 8px 30px 8px 10px; border: 1px solid #ccc; border-radius: 4px; width: 250px;">
+        <i class="fa-solid fa-magnifying-glass" style="position: absolute; right: 10px; top: 50%; transform: translateY(-50%); color: #888; cursor: pointer;" onclick="performGlobalSearch()"></i>
+    `;
+    searchContainer.querySelector('input').addEventListener('keypress', (e) => {
+        if (e.key === 'Enter') performGlobalSearch();
+    });
+    toolbar.appendChild(searchContainer);
+
+    // Notification Bell
+    const notifContainer = createNotificationElement('adminNotifBadge', 'adminNotifDropdown', 'adminNotifList');
+    toolbar.appendChild(notifContainer);
+
+    // Insert Toolbar at top
+    mainContent.insertBefore(toolbar, mainContent.firstChild);
+
+    // 2. Create Containers (Hidden by default)
+    const ownerDiv = document.createElement('div');
+    ownerDiv.id = 'ownerManagementContainer';
+    ownerDiv.className = 'tab-content';
+    ownerDiv.innerHTML = `
         <h2>Owner Management</h2>
         <div id="ownerList">Loading...</div>
     `;
-    document.querySelector('.main-content').appendChild(div);
+    mainContent.appendChild(ownerDiv);
 
-    // 3. Fetch Hotels and Populate Selector
+    const healthDiv = document.createElement('div');
+    healthDiv.id = 'systemHealthContainer';
+    healthDiv.className = 'tab-content';
+    healthDiv.innerHTML = `
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
+            <h2 style="margin: 0;">System Health Status</h2>
+            <button class="main-btn" onclick="renderSystemHealth()"><i class="fa-solid fa-rotate"></i> Refresh Status</button>
+        </div>
+        <div id="healthStatusContent">Loading...</div>
+    `;
+    mainContent.appendChild(healthDiv);
+
+    const backupDiv = document.createElement('div');
+    backupDiv.id = 'backupRestoreContainer';
+    backupDiv.className = 'tab-content';
+    backupDiv.innerHTML = `<h2>Database Backup & Restore</h2><div id="backupContent">Loading...</div>`;
+    mainContent.appendChild(backupDiv);
+
+    // Start polling for notifications
+    fetchNotifications('adminNotifBadge', 'adminNotifList');
+    setInterval(() => fetchNotifications('adminNotifBadge', 'adminNotifList'), 30000); // Poll every 30s
+
+    // 3. Fetch Hotels and Set Default
     try {
         const response = await fetch(`${API_BASE_URL}/hotels`);
         const hotels = await response.json();
         
         if (hotels.length > 0) {
-            selectedHotel = hotels[0]; // Default to first
-            hotels.forEach(h => {
-                const opt = document.createElement('option');
-                opt.value = h;
-                opt.textContent = h;
-                select.appendChild(opt);
-            });
+            // Select first hotel by default
+            // Set variable directly to avoid race condition with DOMContentLoaded initial render
+            selectedHotel = hotels[0];
+            switchBtn.innerHTML = `<i class="fa-solid fa-hotel"></i> ${selectedHotel} <i class="fa-solid fa-caret-down"></i>`;
         } else {
-            const opt = document.createElement('option');
-            opt.textContent = "No Hotels Found";
-            select.appendChild(opt);
+            switchBtn.innerHTML = '<i class="fa-solid fa-hotel"></i> No Hotels Found';
         }
-
-        select.value = selectedHotel;
-        select.onchange = (e) => {
-            selectedHotel = e.target.value;
-            // Refresh current view
-            const activeTab = document.querySelector('.tab-content.active-tab');
-            if (activeTab && activeTab.id !== 'ownerManagementContainer') {
-                // Re-trigger the click on the active sidebar item to reload
-                const activeLi = document.querySelector('.sidebar ul li.active');
-                if (activeLi) activeLi.click();
-            }
-        };
-
-        // Update sidebar hotel name display
-        document.getElementById('sidebarHotelName').textContent = 'Admin Panel';
-
     } catch (e) {
         console.error("Failed to load hotels", e);
+        switchBtn.innerHTML = '<i class="fa-solid fa-hotel"></i> Error Loading Hotels';
+    }
+}
+
+function setupOwnerUI() {
+    // Prevent duplicate initialization
+    if (document.querySelector('.owner-toolbar')) return;
+
+    const mainContent = document.querySelector('.main-content');
+    const toolbar = document.createElement('div');
+    toolbar.className = 'owner-toolbar';
+    // Align to top-right, transparent background to look like a floating header action
+    toolbar.style.cssText = 'display: flex; justify-content: flex-end; padding: 10px 0; margin-bottom: 10px; gap: 15px; align-items: center;';
+
+    // Notification Bell
+    const notifContainer = createNotificationElement('ownerNotifBadge', 'ownerNotifDropdown', 'ownerNotifList');
+    toolbar.appendChild(notifContainer);
+
+    // Broadcast Button
+    const broadcastBtn = document.createElement('button');
+    broadcastBtn.className = 'main-btn';
+    broadcastBtn.innerHTML = '<i class="fa-solid fa-bullhorn"></i> Broadcast to Staff';
+    broadcastBtn.onclick = openOwnerBroadcastModal;
+    broadcastBtn.style.boxShadow = '0 2px 5px rgba(0,0,0,0.15)'; // Add shadow for visibility
+    toolbar.appendChild(broadcastBtn);
+
+    // Insert Toolbar at top
+    mainContent.insertBefore(toolbar, mainContent.firstChild);
+
+    // Start polling
+    fetchNotifications('ownerNotifBadge', 'ownerNotifList');
+    setInterval(() => fetchNotifications('ownerNotifBadge', 'ownerNotifList'), 30000);
+}
+
+function createNotificationElement(badgeId, dropdownId, listId) {
+    const div = document.createElement('div');
+    div.className = 'notification-wrapper'; // Class for click-outside detection
+    div.style.cssText = 'position: relative; cursor: pointer;';
+    div.innerHTML = `
+        <i class="fa-solid fa-bell" style="font-size: 20px; color: #555;" onclick="document.getElementById('${dropdownId}').style.display = document.getElementById('${dropdownId}').style.display === 'none' ? 'block' : 'none'"></i>
+        <span id="${badgeId}" style="position: absolute; top: -5px; right: -5px; background: red; color: white; font-size: 10px; padding: 2px 5px; border-radius: 50%; display: none;">0</span>
+        <div id="${dropdownId}" style="display: none; position: absolute; right: 0; top: 30px; background: white; border: 1px solid #ddd; width: 300px; box-shadow: 0 4px 8px rgba(0,0,0,0.1); z-index: 1000; border-radius: 4px; text-align: left;">
+            <div style="padding: 10px; border-bottom: 1px solid #eee; font-weight: bold; color: #333; display: flex; justify-content: space-between; align-items: center;">
+                <span>Notifications</span>
+                <button onclick="markAllNotificationsRead('${badgeId}', '${listId}')" style="background:none; border:none; color:#007bff; cursor:pointer; font-size:11px;">Mark all read</button>
+            </div>
+            <div id="${listId}" style="max-height: 300px; overflow-y: auto;">
+                <p style="padding: 10px; color: #666; margin: 0;">No new notifications</p>
+            </div>
+        </div>
+    `;
+    return div;
+}
+
+async function openHotelSelectionModal() {
+    showLoading("Loading hotels...");
+    try {
+        const response = await fetch(`${API_BASE_URL}/hotels`);
+        const hotels = await response.json();
+        
+        const modal = document.getElementById('actionModal');
+        const modalBox = document.getElementById('modalBox');
+        
+        let hotelListHtml = hotels.map(h => {
+            const safeName = h.replace(/'/g, "\\'");
+            return `
+            <button class="main-btn" style="width: 100%; margin-bottom: 10px; text-align: left; display: flex; justify-content: space-between; align-items: center; ${h === selectedHotel ? 'background-color: #0056b3; border-color: #004494;' : ''}" onclick="selectAdminHotel('${safeName}')">
+                <span><i class="fa-solid fa-building"></i> ${h}</span>
+                ${h === selectedHotel ? '<i class="fa-solid fa-check"></i>' : ''}
+            </button>
+        `}).join('');
+
+        if (hotels.length === 0) hotelListHtml = '<p>No hotels found.</p>';
+
+        modalBox.innerHTML = `
+            <h3 style="margin-top:0;">Select Hotel</h3>
+            <div style="max-height: 400px; overflow-y: auto; padding-right: 5px;">
+                ${hotelListHtml}
+            </div>
+            <button class="cancel-btn" onclick="closeModal()" style="width: 100%; margin-top: 10px;">Cancel</button>
+        `;
+        modal.style.display = 'flex';
+    } catch (e) {
+        closeModal();
+        showModal("Failed to load hotel list.");
+    }
+}
+
+async function selectAdminHotel(hotelName) {
+    selectedHotel = hotelName;
+    
+    // Update Toolbar Button Text
+    const btn = document.getElementById('adminHotelSwitchBtn');
+    if (btn) btn.innerHTML = `<i class="fa-solid fa-hotel"></i> ${hotelName} <i class="fa-solid fa-caret-down"></i>`;
+    
+    // Show loading immediately to transition from Hotel Select modal
+    showLoading("Switching hotel data...");
+    
+    // Refresh current view by triggering the active tab's click handler
+    const activeLi = document.querySelector('.sidebar ul li.active');
+    if (activeLi && activeLi.style.display !== 'none') {
+        activeLi.click();
+    } else {
+        // Fallback to first visible tab if current is hidden or invalid
+        const firstSidebarLi = document.querySelector('.sidebar ul li:not([style*="display: none"])');
+        if (firstSidebarLi) firstSidebarLi.click(); 
+        else closeModal(); // If no tab to click, close manually
     }
 }
 
@@ -290,10 +518,12 @@ async function renderOwnerManagement() {
     const container = document.getElementById('ownerList');
     setupHeaderAction('ownerList', 'addOwnerBtn', 'Create Owner Account', () => openCreateOwnerModal());
     
+    showLoading("Loading owners...");
     try {
         const response = await fetch(`${API_BASE_URL}/admin/owners`);
         const owners = await response.json();
         
+        closeModal();
         if (owners.length === 0) {
             container.innerHTML = '<p>No owners found.</p>';
             return;
@@ -326,6 +556,7 @@ async function renderOwnerManagement() {
             </table>
         `;
     } catch (e) {
+        closeModal();
         container.innerHTML = '<p>Error loading owners.</p>';
     }
 }
@@ -459,8 +690,9 @@ async function updateOrderStatus(orderId, newStatus) {
     }
 }
 
-async function renderHousekeepingRequests() {
+async function renderHousekeepingRequests(silent = false) {
     const container = document.getElementById('housekeepingList');
+    if (!silent) showLoading("Loading service requests...");
     try {
         const response = await fetch(`${API_BASE_URL}/service-requests?status=Pending`);
         const requests = await response.json();
@@ -468,7 +700,7 @@ async function renderHousekeepingRequests() {
         const currentIds = new Set(requests.map(r => r.ID));
         if (housekeepingInitialized) {
             const hasNew = requests.some(r => !previousHousekeepingIds.has(r.ID));
-            if (hasNew) {
+            if (hasNew && userInteracted) {
                 notificationSound.currentTime = 0;
                 notificationSound.play().catch(e => console.warn("Sound blocked:", e));
             }
@@ -477,6 +709,7 @@ async function renderHousekeepingRequests() {
         }
         previousHousekeepingIds = currentIds;
         
+        if (!silent) closeModal();
         if (requests.length === 0) {
             container.innerHTML = '<p>No pending requests.</p>';
             return;
@@ -490,12 +723,47 @@ async function renderHousekeepingRequests() {
                 </div>
                 <p><strong>Type:</strong> ${r.REQUEST_TYPE}</p>
                 ${r.COMMENTS ? `<p><strong>Note:</strong> ${r.COMMENTS}</p>` : ''}
-                <button class="confirm-btn" onclick="updateServiceRequestStatus(${r.ID}, 'Completed')">Mark Completed</button>
+                <button class="confirm-btn" onclick="openHousekeepingChecklist(${r.ID}, '${r.ROOM_NUMBER}')">Mark Completed</button>
             </div>
         `).join('');
     } catch (e) {
+        if (!silent) closeModal();
         container.innerHTML = '<p>Waiting for requests...</p>';
     }
+}
+
+function openHousekeepingChecklist(requestId, roomNumber) {
+    const modal = document.getElementById('actionModal');
+    const modalBox = document.getElementById('modalBox');
+    
+    modalBox.innerHTML = `
+        <h3 style="margin-top:0;">Housekeeping Checklist</h3>
+        <p>Room: <strong>${roomNumber}</strong></p>
+        <div style="text-align:left; margin: 15px 0;">
+            <label style="display:block; margin-bottom:8px;"><input type="checkbox" class="hk-check"> Change Bed Sheets & Pillowcases</label>
+            <label style="display:block; margin-bottom:8px;"><input type="checkbox" class="hk-check"> Clean Bathroom & Replace Towels</label>
+            <label style="display:block; margin-bottom:8px;"><input type="checkbox" class="hk-check"> Vacuum/Sweep Floor</label>
+            <label style="display:block; margin-bottom:8px;"><input type="checkbox" class="hk-check"> Restock Amenities (Soap, Water)</label>
+            <label style="display:block; margin-bottom:8px;"><input type="checkbox" class="hk-check"> Empty Trash Bins</label>
+        </div>
+        <div style="margin-top: 15px; display: flex; gap: 10px; justify-content: center;">
+            <button class="confirm-btn" onclick="confirmHousekeepingCompletion(${requestId})">Confirm & Complete</button>
+            <button class="cancel-btn" onclick="closeModal()">Cancel</button>
+        </div>
+    `;
+    modal.style.display = 'flex';
+}
+
+function confirmHousekeepingCompletion(requestId) {
+    const checks = document.querySelectorAll('.hk-check');
+    const allChecked = Array.from(checks).every(c => c.checked);
+    
+    if (!allChecked) {
+        return alert("Please complete all checklist items before marking the room as clean.");
+    }
+    
+    closeModal();
+    updateServiceRequestStatus(requestId, 'Completed');
 }
 
 async function updateServiceRequestStatus(id, status) {
@@ -518,10 +786,13 @@ sidebar.addEventListener('mouseleave', () => sidebar.classList.add('collapsed'))
 sidebar.classList.add('collapsed');
 
 function openTab(tabId, elem) {
+    const tab = document.getElementById(tabId);
+    if (!tab) return; // Prevent crash if tab doesn't exist
+
     document.querySelectorAll('.tab-content').forEach(t => t.classList.remove('active-tab'));
-    document.getElementById(tabId).classList.add('active-tab');
+    tab.classList.add('active-tab');
     document.querySelectorAll('.sidebar ul li').forEach(li => li.classList.remove('active'));
-    elem.classList.add('active');
+    if (elem) elem.classList.add('active');
 }
 
 function logout() {
@@ -768,13 +1039,15 @@ function setupHeaderAction(tableId, buttonId, buttonText, onClick) {
 
 // --- ONLINE BOOKING MANAGEMENT ---
 async function renderOnlineBookings() {
+    showLoading("Loading online bookings...");
     try {
-        const response = await fetch(`${API_BASE_URL}/online-bookings?hotelName=${encodeURIComponent(getContextHotel())}`);
+        const response = await fetchWithRetry(`${API_BASE_URL}/online-bookings?hotelName=${encodeURIComponent(getContextHotel())}`);
         const bookings = await response.json();
 
         const table = document.getElementById('onlineBookingTable');
         document.getElementById('totalOnlineBookings').textContent = bookings.length;
 
+        closeModal();
         if (bookings.length === 0) {
             table.innerHTML = '<tr><td colspan="4">No pending online bookings.</td></tr>';
             return;
@@ -796,6 +1069,7 @@ async function renderOnlineBookings() {
             </tr>
         `).join('');
     } catch (error) {
+        closeModal();
         console.error('Failed to fetch online bookings:', error);
         document.getElementById('onlineBookingTable').innerHTML = '<tr><td colspan="4">Connection failed. Please ensure the backend server is running.</td></tr>';
     }
@@ -823,6 +1097,8 @@ async function acceptBooking(bookingId) {
                 <h3 style="margin-top:0;">Confirm Booking #${bookingId}</h3>
                 <p>An OTP has been sent to the guest. Please enter it below, along with their details, to confirm check-in.</p>
                 <input type="text" id="guestCheckinOtp" placeholder="Guest OTP" style="width: 100%; padding: 8px; margin: 8px 0; box-sizing: border-box;" maxlength="6" autofocus>
+                <input type="text" id="onlineGuestMobile" placeholder="Mobile Number" style="width: 100%; padding: 8px; margin: 8px 0; box-sizing: border-box;">
+                <input type="text" id="onlineGuestAddress" placeholder="Address" style="width: 100%; padding: 8px; margin: 8px 0; box-sizing: border-box;">
                 <input type="number" id="onlineGuestAge" placeholder="Guest Age" style="width: 100%; padding: 8px; margin: 8px 0; box-sizing: border-box;">
                 <select id="onlineGuestGender" style="width: 100%; padding: 8px; margin: 8px 0; box-sizing: border-box;">
                     <option value="">Select Gender</option>
@@ -854,13 +1130,15 @@ async function acceptBooking(bookingId) {
 
 async function confirmOnlineBooking(bookingId) {
     const guestOtp = document.getElementById('guestCheckinOtp').value;
+    const mobile = document.getElementById('onlineGuestMobile').value;
+    const address = document.getElementById('onlineGuestAddress').value;
     const age = document.getElementById('onlineGuestAge').value;
     const gender = document.getElementById('onlineGuestGender').value;
     const verificationIdType = document.getElementById('onlineGuestVerificationType').value;
     const verificationId = document.getElementById('onlineGuestVerificationId').value;
 
-    if (!guestOtp || guestOtp.length !== 6 || !age || !gender || !verificationIdType || !verificationId) {
-        return alert('Please fill all fields: OTP, age, gender, and verification details.');
+    if (!guestOtp || guestOtp.length !== 6 || !mobile || !age || !gender || !verificationIdType || !verificationId) {
+        return alert('Please fill all fields: OTP, mobile, age, gender, and verification details.');
     }
 
     try {
@@ -871,6 +1149,8 @@ async function confirmOnlineBooking(bookingId) {
                 bookingId,
                 guestOtp,
                 hotelName: getContextHotel(),
+                mobile,
+                address,
                 age: age,
                 gender: gender,
                 verificationIdType: verificationIdType,
@@ -922,6 +1202,7 @@ function declineBooking(bookingId) {
 
 // --- ROOM MANAGEMENT ---
 async function renderRooms() {
+    showLoading("Loading rooms...");
     try {
         const [response, guestResponse] = await Promise.all([
             fetchWithRetry(`${API_BASE_URL}/rooms?hotelName=${encodeURIComponent(getContextHotel())}`),
@@ -932,7 +1213,7 @@ async function renderRooms() {
         const occupiedRooms = new Set(guests.map(g => g.ROOM_NUMBER));
 
         const roomTable = document.getElementById('roomTable');
-        const canManage = user.role === 'Owner' || user.role === 'Admin' || user.permissions.manageRooms;
+        const canManage = user.role === 'Owner' || (user.role !== 'Admin' && user.permissions?.manageRooms);
 
         // Hide the static Add Room form and inject an Add button if permitted
         const staticForm = document.getElementById('addRoomForm');
@@ -942,6 +1223,7 @@ async function renderRooms() {
             setupHeaderAction('roomTable', 'dynamicAddRoomBtn', 'Add New Room', () => openRoomModal());
         }
 
+        closeModal();
         if (rooms.length === 0) {
             roomTable.innerHTML = '<tr><td colspan="6">No rooms found. Add a room to get started.</td></tr>';
             return;
@@ -949,9 +1231,8 @@ async function renderRooms() {
 
         roomTable.innerHTML = rooms.map(room => {
             const isOccupied = occupiedRooms.has(room.ROOM_NUMBER);
-            const roomJson = JSON.stringify(room).replace(/'/g, "&#39;");
             const actionButtons = canManage ? `
-                <button class="edit-btn" onclick='editRoom(${roomJson})' ${isOccupied ? 'disabled' : ''} title="${isOccupied ? 'Cannot edit occupied room' : 'Edit Room'}"><i class="fa-solid fa-pen-to-square"></i></button>
+                <button class="edit-btn" onclick='editRoom("${room.ROOM_NUMBER}")' ${isOccupied ? 'disabled' : ''} title="${isOccupied ? 'Cannot edit occupied room' : 'Edit Room'}"><i class="fa-solid fa-pen-to-square"></i></button>
                 <button class="delete-btn" onclick="deleteRoom('${room.ROOM_NUMBER}')" ${isOccupied ? 'disabled' : ''} title="${isOccupied ? 'Cannot delete occupied room' : 'Delete Room'}"><i class="fa-solid fa-trash"></i></button>
             ` : 'No Access';
 
@@ -967,6 +1248,7 @@ async function renderRooms() {
             `;
         }).join('');
     } catch (error) {
+        closeModal();
         console.error('Failed to fetch rooms:', error);
         document.getElementById('roomTable').innerHTML = '<tr><td colspan="6" style="text-align:center; color:red;">Failed to load rooms. <button class="main-btn" style="margin:10px auto;" onclick="renderRooms()">Retry</button></td></tr>';
     }
@@ -1043,8 +1325,17 @@ window.deleteTempPhoto = function(index) {
     renderExistingPhotos();
 }
 
-function editRoom(room) {
-    openRoomModal(room);
+async function editRoom(roomNumber) {
+    showLoading("Fetching room details...");
+    try {
+        const response = await fetch(`${API_BASE_URL}/rooms/${roomNumber}?hotelName=${encodeURIComponent(getContextHotel())}`);
+        const room = await response.json();
+        closeModal();
+        openRoomModal(room);
+    } catch (e) {
+        closeModal();
+        showModal("Failed to load room details.");
+    }
 }
 
 function cancelRoomEdit() {
@@ -1176,7 +1467,7 @@ async function renderAvailability() {
 
     try {
         // Show loading if not already shown (e.g. via Refresh button)
-        if (document.getElementById('actionModal').style.display === 'none') showLoading("Updating availability...");
+        showLoading("Updating availability...");
 
         const [roomsResponse, guestsResponse] = await Promise.all([
             fetchWithRetry(`${API_BASE_URL}/rooms?hotelName=${encodeURIComponent(getContextHotel())}`),
@@ -1274,13 +1565,14 @@ async function renderAvailability() {
 
 // --- GUEST & BOOKING MANAGEMENT ---
 async function renderGuestsAndBookings() {
+    showLoading("Loading guests...");
     try {
         const response = await fetchWithRetry(`${API_BASE_URL}/guests?hotelName=${encodeURIComponent(getContextHotel())}`);
         const guests = await response.json();
         const guestTable = document.getElementById('guestTable');
         const bookingTable = document.getElementById('bookingTable');
-        const canEditGuests = user.role === 'Owner' || user.role === 'Admin' || user.permissions.editGuests;
-        const canAddGuests = user.role === 'Owner' || user.role === 'Admin' || user.permissions.addGuests;
+        const canEditGuests = user.role === 'Owner' || (user.role !== 'Admin' && user.permissions?.editGuests);
+        const canAddGuests = user.role === 'Owner' || (user.role !== 'Admin' && user.permissions?.addGuests);
 
         // Hide the static Add Guest form and inject an Add button if permitted
         const staticGuestForm = document.getElementById('addGuestForm');
@@ -1308,6 +1600,7 @@ async function renderGuestsAndBookings() {
             }
         }
  
+        closeModal();
         guestTable.innerHTML = guests.map(g => {
             const guestJson = JSON.stringify(g).replace(/'/g, "&#39;");
             const actionCell = canEditGuests ? `
@@ -1344,6 +1637,7 @@ async function renderGuestsAndBookings() {
             </tr>`
         ).join('');
     } catch (error) {
+        closeModal();
         console.error('Failed to fetch guests:', error);
         const table = document.getElementById('guestTable');
         if (table) table.innerHTML = '<tr><td colspan="10" style="text-align:center; color:red;">Failed to load guests. <button class="main-btn" style="margin:10px auto;" onclick="renderGuestsAndBookings()">Retry</button></td></tr>';
@@ -1379,6 +1673,7 @@ function openGuestModal(guest = null) {
              <input type="text" id="modal_guestMobile" placeholder="Mobile" style="flex:1; padding: 8px; margin: 8px 0; box-sizing: border-box;">
         </div>
         <input type="email" id="modal_guestEmail" placeholder="Email" style="width: 100%; padding: 8px; margin: 8px 0; box-sizing: border-box;">
+        <input type="text" id="modal_guestAddress" placeholder="Address" style="width: 100%; padding: 8px; margin: 8px 0; box-sizing: border-box;">
         <input type="text" id="modal_guestRoom" placeholder="Room Number" style="width: 100%; padding: 8px; margin: 8px 0; box-sizing: border-box;">
         
         <div style="display:flex; gap:10px;">
@@ -1408,6 +1703,7 @@ function openGuestModal(guest = null) {
         document.getElementById('modal_guestCountryCode').value = guest.COUNTRY_CODE || '+91';
         document.getElementById('modal_guestMobile').value = guest.MOBILE_NUMBER;
         document.getElementById('modal_guestEmail').value = guest.EMAIL || '';
+        document.getElementById('modal_guestAddress').value = guest.ADDRESS || '';
         document.getElementById('modal_guestRoom').value = guest.ROOM_NUMBER;
         document.getElementById('modal_guestVerificationType').value = guest.VERIFICATION_ID_TYPE || '';
         document.getElementById('modal_guestVerificationId').value = guest.VERIFICATION_ID || '';
@@ -1439,7 +1735,7 @@ async function saveGuest() {
         verificationIdType: document.getElementById('modal_guestVerificationType').value,
         verificationId: document.getElementById('modal_guestVerificationId').value.trim(),
         checkIn: document.getElementById('modal_guestCheckIn').value,
-        address: user.address || '', 
+        address: document.getElementById('modal_guestAddress').value.trim(), 
         hotelName: getContextHotel()
     };
 
@@ -1676,19 +1972,27 @@ function printBill() {
     printWindow.print();
 }
 
-async function renderHistory() {
+async function renderHistory(roomFilter = '') {
     if (user.role === 'Employee') return;
     const container = document.getElementById('historyContainer');
+    showLoading("Loading history...");
     try {
-        const response = await fetch(`${API_BASE_URL}/history?hotelName=${encodeURIComponent(getContextHotel())}`);
+        // Limit to last 100 records for speed
+        const url = `${API_BASE_URL}/history?hotelName=${encodeURIComponent(getContextHotel())}&limit=100${roomFilter ? '&roomNumber=' + roomFilter : ''}`;
+        const response = await fetchWithRetry(url);
         const history = await response.json();
 
+        closeModal();
         if (history.length === 0) {
             container.innerHTML = "<p>No billing history found.</p>";
             return;
         }
 
         container.innerHTML = `
+            <div style="margin-bottom: 15px; display: flex; gap: 10px; align-items: center;">
+                <input type="text" id="historyRoomFilter" placeholder="Filter by Room No." value="${roomFilter}" style="padding: 8px; border: 1px solid #ccc; border-radius: 4px;">
+                <button class="main-btn" onclick="renderHistory(document.getElementById('historyRoomFilter').value)">Filter</button>
+            </div>
             <table>
                 <thead>
                     <tr><th>Guest</th><th>Room</th><th>Check-in</th><th>Check-out</th><th>Hours</th><th>Gross</th><th>Discount</th><th>Final</th></tr>
@@ -1709,6 +2013,7 @@ async function renderHistory() {
                 </tbody>
             </table>`;
     } catch (error) {
+        closeModal();
         console.error('Failed to fetch history:', error);
         container.innerHTML = "<p>Error loading history.</p>";
     }
@@ -1726,8 +2031,9 @@ function getServiceArea(role) {
 async function renderAccessTable() {
     if (user.role !== 'Owner' && user.role !== 'Admin') return;
 
+    showLoading("Loading employees...");
     try {
-        const response = await fetch(`${API_BASE_URL}/users?hotelName=${encodeURIComponent(getContextHotel())}`);
+        const response = await fetchWithRetry(`${API_BASE_URL}/users?hotelName=${encodeURIComponent(getContextHotel())}`);
         const users = await response.json();
         const table = document.getElementById('accessTable');
 
@@ -1744,8 +2050,11 @@ async function renderAccessTable() {
         }
 
         // Add "Add Employee" button to the top right
-        setupHeaderAction('accessTable', 'addUserBtn', 'Add New Employee', () => openCreateAccountModal());
+        if (user.role === 'Owner') {
+            setupHeaderAction('accessTable', 'addUserBtn', 'Add New Employee', () => openCreateAccountModal());
+        }
         
+        closeModal();
         if (users.length === 0) {
             table.innerHTML = '<tr><td colspan="5">No employees found to manage.</td></tr>';
             return;
@@ -1755,9 +2064,20 @@ async function renderAccessTable() {
             const isSpecialRole = u.ROLE === 'Chef' || u.ROLE === 'Waiter';
             
             // Helper to render toggle or N/A
-            const renderToggle = (perm, col) => isSpecialRole 
-                ? `<td style="color:#ccc; text-align:center;">-</td>` 
-                : `<td><label class="switch" title="Allow user to ${col}"><input type="checkbox" ${perm === 1 ? 'checked' : ''} onchange="updateUserPermission(${u.USER_ID}, '${col}', this)"><span class="slider round"></span></label></td>`;
+            const renderToggle = (perm, col) => {
+                if (isSpecialRole) return `<td style="color:#ccc; text-align:center;">-</td>`;
+                if (user.role !== 'Owner') return `<td style="text-align:center;">${perm === 1 ? '<i class="fa-solid fa-check" style="color:green;"></i>' : '<i class="fa-solid fa-xmark" style="color:red;"></i>'}</td>`;
+                return `<td><label class="switch" title="Allow user to ${col}"><input type="checkbox" ${perm === 1 ? 'checked' : ''} onchange="updateUserPermission(${u.USER_ID}, '${col}', this)"><span class="slider round"></span></label></td>`;
+            };
+
+            const actionButtons = user.role === 'Owner' ? `
+                <button class="edit-btn" onclick='editUser(${userJson})' style="margin: 0 auto 5px auto;" title="Edit Employee">
+                    <i class="fa-solid fa-pen"></i>
+                </button>
+                <button class="delete-btn" onclick="deleteUser(${u.USER_ID}, '${u.FULL_NAME.replace(/'/g, "\\'")}')" style="margin: 0 auto;" title="Delete Employee">
+                    <i class="fa-solid fa-trash"></i>
+                </button>
+            ` : '<span style="color:#999; font-style:italic;">View Only</span>';
 
             return `
             <tr>
@@ -1768,17 +2088,11 @@ async function renderAccessTable() {
                 ${renderToggle(u.PERM_MANAGE_ROOMS, 'manageRooms')}
                 ${renderToggle(u.PERM_ADD_GUESTS, 'addGuests')}
                 ${renderToggle(u.PERM_EDIT_GUESTS, 'editGuests')}
-                <td>
-                    <button class="edit-btn" onclick='editUser(${userJson})' style="margin: 0 auto 5px auto;" title="Edit Employee">
-                        <i class="fa-solid fa-pen"></i>
-                    </button>
-                    <button class="delete-btn" onclick="deleteUser(${u.USER_ID}, '${u.FULL_NAME.replace(/'/g, "\\'")}')" style="margin: 0 auto;" title="Delete Employee">
-                        <i class="fa-solid fa-trash"></i>
-                    </button>
-                </td>
+                <td>${actionButtons}</td>
             </tr>
         `}).join('');
     } catch (error) {
+        closeModal();
         console.error('Failed to load access data:', error);
         document.getElementById('accessTable').innerHTML = '<tr><td colspan="5">Error loading users.</td></tr>';
     }
@@ -2067,6 +2381,14 @@ async function refreshUserProfile() {
             const updatedUser = await response.json();
             localStorage.setItem('hmsCurrentUser', JSON.stringify(updatedUser));
             user = updatedUser; 
+            
+            // Refresh read notifications set
+            if (user.readNotifications) {
+                try {
+                    const savedReads = JSON.parse(user.readNotifications);
+                    if (Array.isArray(savedReads)) readNotificationIds = new Set(savedReads);
+                } catch(e) {}
+            }
             await applyUIPermissions();
         }
     } catch (e) {
@@ -2099,8 +2421,9 @@ async function markAllOrdersPrepared() {
 }
 
 // --- KITCHEN & DELIVERY VIEWS ---
-async function renderKitchenOrders() {
+async function renderKitchenOrders(silent = false) {
     const container = document.getElementById('kitchenOrdersList');
+    if (!silent) showLoading("Loading kitchen orders...");
     try {
         const response = await fetch(`${API_BASE_URL}/food-orders?status=Pending`);
         const orders = await response.json();
@@ -2108,7 +2431,7 @@ async function renderKitchenOrders() {
         const currentIds = new Set(orders.map(o => o.id));
         if (kitchenInitialized) {
             const hasNew = orders.some(o => !previousKitchenOrderIds.has(o.id));
-            if (hasNew) {
+            if (hasNew && userInteracted) {
                 notificationSound.play().catch(e => console.warn("Sound blocked:", e));
             }
         } else {
@@ -2116,6 +2439,7 @@ async function renderKitchenOrders() {
         }
         previousKitchenOrderIds = currentIds;
 
+        if (!silent) closeModal();
         if (orders.length === 0) {
             container.innerHTML = `
                 <div style="text-align: right; margin-bottom: 10px;">
@@ -2148,6 +2472,7 @@ async function renderKitchenOrders() {
             </div>
         `).join('');
     } catch (e) {
+        if (!silent) closeModal();
         container.innerHTML = '<p>Waiting for orders...</p>';
     }
 }
@@ -2219,12 +2544,14 @@ async function toggleChefStock(id, checkbox) {
     }
 }
 
-async function renderDeliveryOrders() {
+async function renderDeliveryOrders(silent = false) {
     const container = document.getElementById('deliveryOrdersList');
+    if (!silent) showLoading("Loading deliveries...");
     try {
         const response = await fetch(`${API_BASE_URL}/food-orders?status=Prepared`);
         const orders = await response.json();
         
+        if (!silent) closeModal();
         if (orders.length === 0) {
             container.innerHTML = '<p>No orders ready for delivery.</p>';
             return;
@@ -2244,9 +2571,316 @@ async function renderDeliveryOrders() {
             </div>
         `).join('');
     } catch (e) {
+        if (!silent) closeModal();
         container.innerHTML = '<p>Waiting for prepared food...</p>';
     }
 }
+
+// --- MAINTENANCE LOG ---
+async function renderMaintenance() {
+    const container = document.getElementById('maintenanceList') || document.getElementById('maintenanceContainer');
+    if (!container) return;
+    
+    // Ensure container structure if called directly
+    if (container.id === 'maintenanceContainer') {
+        container.innerHTML = '<h2>Maintenance Log</h2><div id="maintenanceList"></div>';
+    }
+    const listDiv = document.getElementById('maintenanceList');
+
+    setupHeaderAction('maintenanceList', 'reportIssueBtn', 'Report Issue', () => openMaintenanceModal());
+
+    showLoading("Loading maintenance logs...");
+    try {
+        const response = await fetch(`${API_BASE_URL}/maintenance?hotelName=${encodeURIComponent(getContextHotel())}`);
+        const logs = await response.json();
+        closeModal();
+
+        if (logs.length === 0) {
+            listDiv.innerHTML = '<p>No maintenance issues reported.</p>';
+            return;
+        }
+
+        listDiv.innerHTML = logs.map(log => {
+            const statusColor = log.STATUS === 'Fixed' ? '#28a745' : (log.STATUS === 'In Progress' ? '#ffc107' : '#dc3545');
+            const priorityColor = log.PRIORITY === 'High' ? 'red' : (log.PRIORITY === 'Medium' ? 'orange' : 'green');
+            
+            let photoHtml = '';
+            if (log.PHOTO) {
+                // Assuming PHOTO is base64 string
+                photoHtml = `<img src="${log.PHOTO}" style="max-width: 100px; max-height: 100px; border-radius: 4px; cursor: pointer; margin-top: 5px;" onclick="showModal('<img src=\\'${log.PHOTO}\\' style=\\'max-width:100%;\\'>')">`;
+            }
+            
+            return `
+            <div class="bill-card" style="text-align:left; margin-bottom:15px; border-left: 5px solid ${statusColor}; position: relative;">
+                <div style="display:flex; justify-content:space-between; align-items:flex-start;">
+                    <div>
+                        <h3 style="margin: 0 0 5px 0;">${log.ITEM_NAME} <span style="font-size:0.8em; font-weight:normal; color:#666;">(Room ${log.ROOM_NUMBER})</span></h3>
+                        <span style="font-size: 12px; background: ${priorityColor}; color: white; padding: 2px 6px; border-radius: 4px;">${log.PRIORITY}</span>
+                        <span style="font-size: 12px; color: #666; margin-left: 10px;">Reported by: ${log.REPORTED_BY} on ${new Date(log.CREATED_AT).toLocaleDateString()}</span>
+                    </div>
+                    <div style="text-align:right;">
+                        <span style="font-weight:bold; color:${statusColor}; display:block; margin-bottom:5px;">${log.STATUS}</span>
+                        ${log.STATUS !== 'Fixed' ? `
+                            <button class="main-btn" style="padding: 4px 8px; font-size: 12px;" onclick="updateMaintenanceStatus(${log.ID}, '${log.STATUS}')">
+                                ${log.STATUS === 'Reported' ? 'Start Work' : 'Mark Fixed'}
+                            </button>
+                        ` : ''}
+                    </div>
+                </div>
+                <p style="margin-top: 10px; color: #444;">${log.DESCRIPTION}</p>
+                ${photoHtml}
+            </div>
+        `}).join('');
+    } catch (e) {
+        closeModal();
+        listDiv.innerHTML = '<p>Error loading logs.</p>';
+    }
+}
+
+function openMaintenanceModal() {
+    const modal = document.getElementById('actionModal');
+    const modalBox = document.getElementById('modalBox');
+    modalBox.innerHTML = `
+        <h3 style="margin-top:0;">Report Maintenance Issue</h3>
+        <input type="text" id="maintRoom" placeholder="Room Number (e.g., 101)" style="width: 100%; padding: 8px; margin: 8px 0; box-sizing: border-box;">
+        <input type="text" id="maintItem" placeholder="Item Name (e.g., AC, Tap)" style="width: 100%; padding: 8px; margin: 8px 0; box-sizing: border-box;">
+        <select id="maintPriority" style="width: 100%; padding: 8px; margin: 8px 0; box-sizing: border-box;">
+            <option value="Low">Low Priority</option>
+            <option value="Medium" selected>Medium Priority</option>
+            <option value="High">High Priority</option>
+        </select>
+        <textarea id="maintDesc" rows="3" placeholder="Description of the issue..." style="width: 100%; padding: 8px; margin: 8px 0; box-sizing: border-box; font-family: inherit;"></textarea>
+        <label style="display:block; text-align:left; font-size:12px; margin-top:5px;">Upload Photo (Optional)</label>
+        <input type="file" id="maintPhoto" accept="image/*" style="width: 100%; padding: 8px; margin: 5px 0 8px 0; box-sizing: border-box;">
+        <div style="margin-top: 15px; display: flex; gap: 10px; justify-content: center;">
+            <button class="confirm-btn" onclick="saveMaintenanceReport()">Report</button>
+            <button class="cancel-btn" onclick="closeModal()">Cancel</button>
+        </div>
+    `;
+    modal.style.display = 'flex';
+}
+
+async function saveMaintenanceReport() {
+    const roomNumber = document.getElementById('maintRoom').value.trim();
+    const itemName = document.getElementById('maintItem').value.trim();
+    const priority = document.getElementById('maintPriority').value;
+    const description = document.getElementById('maintDesc').value.trim();
+    const fileInput = document.getElementById('maintPhoto');
+
+    if (!roomNumber || !itemName || !description) return alert("Please fill all fields.");
+
+    try {
+        let photo = null;
+        if (fileInput.files.length > 0) {
+            showLoading("Processing photo...");
+            photo = await new Promise((resolve, reject) => {
+                const reader = new FileReader();
+                reader.onload = e => resolve(e.target.result);
+                reader.onerror = reject;
+                reader.readAsDataURL(fileInput.files[0]);
+            });
+        }
+
+        await fetch(`${API_BASE_URL}/maintenance`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ roomNumber, itemName, description, priority, reportedBy: user.fullName, hotelName: getContextHotel(), photo })
+        });
+        closeModal();
+        renderMaintenance();
+    } catch (e) { alert("Failed to report issue."); }
+}
+
+async function updateMaintenanceStatus(id, currentStatus) {
+    const newStatus = currentStatus === 'Reported' ? 'In Progress' : 'Fixed';
+    try {
+        await fetch(`${API_BASE_URL}/maintenance/${id}`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ status: newStatus })
+        });
+        renderMaintenance();
+    } catch (e) { alert("Failed to update status."); }
+}
+
+// --- LOST & FOUND ---
+async function renderLostFound() {
+    const container = document.getElementById('lostFoundContainer');
+    if (!container) return;
+    
+    container.innerHTML = '<h2>Lost & Found Log</h2><div id="lostFoundList"></div>';
+    setupHeaderAction('lostFoundList', 'addLostFoundBtn', 'Record Item', () => openLostFoundModal());
+    
+    const listDiv = document.getElementById('lostFoundList');
+    showLoading("Loading items...");
+    
+    try {
+        const response = await fetch(`${API_BASE_URL}/lost-found?hotelName=${encodeURIComponent(getContextHotel())}`);
+        const items = await response.json();
+        closeModal();
+        
+        if (items.length === 0) {
+            listDiv.innerHTML = '<p>No items recorded.</p>';
+            return;
+        }
+        
+        listDiv.innerHTML = items.map(item => {
+            const isFound = item.STATUS === 'Found';
+            return `
+            <div class="bill-card" style="text-align:left; margin-bottom:15px; border-left: 5px solid ${isFound ? '#ffc107' : '#28a745'};">
+                <div style="display:flex; justify-content:space-between;">
+                    <h3>${item.ITEM_NAME}</h3>
+                    <span style="font-weight:bold; color:${isFound ? '#d39e00' : 'green'}">${item.STATUS}</span>
+                </div>
+                <p><strong>Location:</strong> ${item.FOUND_LOCATION} | <strong>Found By:</strong> ${item.FOUND_BY}</p>
+                <p>${item.DESCRIPTION}</p>
+                <p style="font-size:12px; color:#666;">Date: ${new Date(item.DATE_FOUND).toLocaleString()}</p>
+                ${!isFound ? `<p style="font-size:12px; color:green;">Claimed by: ${item.CLAIMED_BY} on ${new Date(item.DATE_CLAIMED).toLocaleDateString()}</p>` : ''}
+                ${isFound ? `<button class="confirm-btn" onclick="markItemClaimed(${item.ID})" style="margin-top:10px;">Mark as Claimed</button>` : ''}
+            </div>
+        `}).join('');
+    } catch (e) {
+        closeModal();
+        listDiv.innerHTML = '<p>Error loading items.</p>';
+    }
+}
+
+function openLostFoundModal() {
+    const modal = document.getElementById('actionModal');
+    const modalBox = document.getElementById('modalBox');
+    modalBox.innerHTML = `
+        <h3 style="margin-top:0;">Record Lost Item</h3>
+        <input type="text" id="lfItem" placeholder="Item Name" style="width: 100%; padding: 8px; margin: 8px 0; box-sizing: border-box;">
+        <input type="text" id="lfLocation" placeholder="Found Location (e.g., Room 101, Lobby)" style="width: 100%; padding: 8px; margin: 8px 0; box-sizing: border-box;">
+        <textarea id="lfDesc" rows="3" placeholder="Description..." style="width: 100%; padding: 8px; margin: 8px 0; box-sizing: border-box; font-family: inherit;"></textarea>
+        <div style="margin-top: 15px; display: flex; gap: 10px; justify-content: center;">
+            <button class="confirm-btn" onclick="saveLostFoundItem()">Save</button>
+            <button class="cancel-btn" onclick="closeModal()">Cancel</button>
+        </div>
+    `;
+    modal.style.display = 'flex';
+}
+
+async function saveLostFoundItem() {
+    const itemName = document.getElementById('lfItem').value.trim();
+    const location = document.getElementById('lfLocation').value.trim();
+    const description = document.getElementById('lfDesc').value.trim();
+    
+    if (!itemName || !location) return alert("Item name and location are required.");
+    
+    try {
+        await fetch(`${API_BASE_URL}/lost-found`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ itemName, location, description, foundBy: user.fullName, hotelName: getContextHotel() })
+        });
+        closeModal();
+        renderLostFound();
+    } catch (e) { alert("Failed to save item."); }
+}
+
+function markItemClaimed(id) {
+    const modal = document.getElementById('actionModal');
+    const modalBox = document.getElementById('modalBox');
+    modalBox.innerHTML = `
+        <h3 style="margin-top:0;">Mark Item as Claimed</h3>
+        <input type="text" id="lfClaimedBy" placeholder="Claimed By (Name/ID)" style="width: 100%; padding: 8px; margin: 8px 0; box-sizing: border-box;">
+        <div style="margin-top: 15px; display: flex; gap: 10px; justify-content: center;">
+            <button class="confirm-btn" onclick="submitClaim(${id})">Confirm</button>
+            <button class="cancel-btn" onclick="closeModal()">Cancel</button>
+        </div>
+    `;
+    modal.style.display = 'flex';
+}
+
+async function submitClaim(id) {
+    const claimedBy = document.getElementById('lfClaimedBy').value.trim();
+    if (!claimedBy) return alert("Please enter who claimed the item.");
+    
+    try {
+        await fetch(`${API_BASE_URL}/lost-found/${id}`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ status: 'Claimed', claimedBy })
+        });
+        closeModal();
+        renderLostFound();
+    } catch (e) { alert("Failed to update status."); }
+}
+
+// --- SETTINGS ---
+function renderSettings() {
+    const container = document.getElementById('settingsContainer');
+    const currentVol = user.notificationVolume !== undefined ? user.notificationVolume : 1.0;
+    
+    container.innerHTML = `
+        <h2>Settings</h2>
+        <div class="bill-card" style="max-width: 500px;">
+            <h3>Notification Sound</h3>
+            <div style="margin: 15px 0;">
+                <label>Volume: <span id="volDisplay">${Math.round(currentVol * 100)}%</span></label>
+                <input type="range" min="0" max="1" step="0.1" value="${currentVol}" style="width:100%;" oninput="updateVolume(this.value)">
+            </div>
+            <div style="margin: 15px 0;">
+                <label>Custom Sound (MP3/WAV):</label>
+                <input type="file" id="customSoundFile" accept="audio/*" onchange="saveCustomSound(this)">
+                <button class="main-btn" onclick="notificationSound.play()" style="margin-top:10px;"><i class="fa-solid fa-play"></i> Test Sound</button>
+                <button class="delete-btn" onclick="resetSound()" style="margin-top:10px;">Reset to Default</button>
+            </div>
+        </div>
+    `;
+}
+
+window.updateVolume = async function(val) {
+    document.getElementById('volDisplay').textContent = Math.round(val * 100) + '%';
+    notificationSound.volume = val;
+    
+    // Save to DB (Debouncing recommended in production, but direct call for simplicity here)
+    try {
+        await fetch(`${API_BASE_URL}/users/${user.userId}`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ notificationVolume: val })
+        });
+        user.notificationVolume = val;
+        localStorage.setItem('hmsCurrentUser', JSON.stringify(user));
+    } catch(e) { console.error("Failed to save volume", e); }
+};
+
+window.saveCustomSound = function(input) {
+    if (input.files && input.files[0]) {
+        const reader = new FileReader();
+        reader.onload = async function(e) {
+            notificationSound.src = e.target.result;
+            try {
+                showLoading("Saving sound...");
+                await fetch(`${API_BASE_URL}/users/${user.userId}`, {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ notificationSound: e.target.result })
+                });
+                user.notificationSound = e.target.result;
+                localStorage.setItem('hmsCurrentUser', JSON.stringify(user));
+                closeModal();
+                alert("Sound updated!");
+            } catch(err) { closeModal(); alert("Failed to save sound."); }
+        };
+        reader.readAsDataURL(input.files[0]);
+    }
+};
+
+window.resetSound = async function() {
+    // Pass null to reset
+    await fetch(`${API_BASE_URL}/users/${user.userId}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ notificationSound: null })
+    });
+    user.notificationSound = null;
+    localStorage.setItem('hmsCurrentUser', JSON.stringify(user));
+    loadNotificationSettings();
+    alert("Sound reset to default.");
+};
 
 // --- MENU MANAGEMENT (OWNER ONLY) ---
 async function renderMenuManagement() {
@@ -2257,11 +2891,14 @@ async function renderMenuManagement() {
     setupHeaderAction('menuManagementList', 'bulkAddMenuItemBtn', 'Bulk Add', () => openBulkAddMenuModal());
     setupHeaderAction('menuManagementList', 'bulkDeleteMenuItemBtn', 'Delete Selected', () => deleteSelectedMenuItems());
 
+    showLoading("Loading menu...");
     try {
-        const response = await fetch(`${API_BASE_URL}/menu`);
+        const response = await fetch(`${API_BASE_URL}/menu?hotelName=${encodeURIComponent(getContextHotel())}`);
         allMenuItems = await response.json();
         updateMenuTable();
+        closeModal();
     } catch (e) {
+        closeModal();
         console.error("Failed to load menu", e);
         container.innerHTML = '<p>Error loading menu.</p>';
     }
@@ -2521,7 +3158,7 @@ async function saveBulkMenuItems() {
         await fetch(`${API_BASE_URL}/menu/bulk`, {
             method: 'POST',
             headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({ items })
+            body: JSON.stringify({ items, hotelName: getContextHotel() })
         });
         closeModal();
         renderMenuManagement();
@@ -2579,7 +3216,7 @@ async function saveMenuItem() {
             imageUrl = '';
         }
 
-        const payload = { name, price, category };
+        const payload = { name, price, category, hotelName: getContextHotel() };
         if (imageUrl !== undefined) payload.imageUrl = imageUrl;
 
         let url = `${API_BASE_URL}/menu`;
@@ -2693,21 +3330,14 @@ async function renderReports(viewType = 'daily') {
 
     try {
         await loadChartJs();
-        const response = await fetch(`${API_BASE_URL}/history?hotelName=${encodeURIComponent(getContextHotel())}`);
+        // Fetch only the data for the selected date range
+        const response = await fetch(`${API_BASE_URL}/history?hotelName=${encodeURIComponent(getContextHotel())}&startDate=${startVal}&endDate=${endVal}`);
         const history = await response.json();
         
         closeModal();
-
-        // Filter Data
-        const start = new Date(startVal);
-        start.setHours(0,0,0,0);
-        const end = new Date(endVal);
-        end.setHours(23,59,59,999);
-
-        const filteredHistory = history.filter(record => {
-            const d = new Date(record.CHECK_OUT_TIME);
-            return d >= start && d <= end;
-        });
+        
+        // Data is already filtered by server
+        const filteredHistory = history;
 
         // Calculate Totals
         const totalRevenue = filteredHistory.reduce((sum, r) => sum + r.FINAL_AMOUNT, 0);
@@ -2809,6 +3439,26 @@ document.addEventListener('DOMContentLoaded', async () => {
             if (tabId) openTab(tabId, firstVisibleTabLink);
         }
         
+        // Add Maintenance Tab for Owner/Manager/Admin (Standard Roles)
+        if (user.role === 'Owner' || user.role === 'Manager' || user.role === 'Admin') {
+            const sidebarList = document.querySelector('.sidebar ul');
+            const liM = document.createElement('li');
+            liM.innerHTML = '<i class="fa-solid fa-screwdriver-wrench"></i> Maintenance';
+            liM.onclick = function() { openTab('maintenanceContainer', this); renderMaintenance(); };
+            sidebarList.insertBefore(liM, sidebarList.lastElementChild); // Insert before logout
+
+            const divM = document.createElement('div');
+            divM.id = 'maintenanceContainer';
+            divM.className = 'tab-content';
+            document.querySelector('.main-content').appendChild(divM);
+
+            // Add Lost & Found Tab
+            const liLF = document.createElement('li');
+            liLF.innerHTML = '<i class="fa-solid fa-magnifying-glass-location"></i> Lost & Found';
+            liLF.onclick = function() { openTab('lostFoundContainer', this); renderLostFound(); };
+            sidebarList.insertBefore(liLF, sidebarList.lastElementChild);
+        }
+
         const loadPromises = [];
 
         // Only render standard dashboard items if not a special role
@@ -2853,9 +3503,16 @@ document.addEventListener('DOMContentLoaded', async () => {
                 `;
                 document.head.appendChild(style);
             }
+
+            // Create Lost & Found Container
+            const divLF = document.createElement('div');
+            divLF.id = 'lostFoundContainer';
+            divLF.className = 'tab-content';
+            document.querySelector('.main-content').appendChild(divLF);
         }
         loadPromises.push(refreshUserProfile());
         await Promise.all(loadPromises);
+        applyUserSettings(); // Apply settings after profile refresh
     } catch (error) {
         console.error("Error initializing dashboard:", error);
     } finally {
@@ -2891,6 +3548,12 @@ document.addEventListener('DOMContentLoaded', async () => {
             document.querySelector('.main-content').appendChild(reportDiv);
         }
 
+        // Settings Link (Everyone)
+        const settingsLi = document.createElement('li');
+        settingsLi.innerHTML = '<i class="fa-solid fa-gear"></i> Settings';
+        settingsLi.onclick = function() { openTab('settingsContainer', this); renderSettings(); };
+        sidebarList.appendChild(settingsLi);
+
         // Logout Button (Bottom of Sidebar)
         // Remove any existing logout button to prevent duplicates, and remove Change Password (moved to profile)
         Array.from(sidebarList.children).forEach(li => {
@@ -2903,10 +3566,565 @@ document.addEventListener('DOMContentLoaded', async () => {
         logoutLi.onclick = logout;
         logoutLi.style.marginTop = 'auto'; // Pushes to the bottom
         sidebarList.appendChild(logoutLi);
+
+        // Create Settings Container
+        const settingsDiv = document.createElement('div');
+        settingsDiv.id = 'settingsContainer';
+        settingsDiv.className = 'tab-content';
+        document.querySelector('.main-content').appendChild(settingsDiv);
     }
     
     injectDarkModeStyles();
-    const isDark = localStorage.getItem('hmsDarkMode') === 'true';
-    if (isDark) document.body.classList.add('dark-mode');
-    updateDarkModeButton(isDark);
+    // Dark mode is applied in applyUserSettings() called after refreshUserProfile
+
+    // Check for broadcasts
+    checkBroadcasts();
+
+    // Global Click Listener for Notifications
+    document.addEventListener('click', (e) => {
+        if (!e.target.closest('.notification-wrapper')) {
+            document.querySelectorAll('[id$="NotifDropdown"]').forEach(el => el.style.display = 'none');
+        }
+    });
 });
+
+function applyUserSettings() {
+    if (user.isDarkMode) document.body.classList.add('dark-mode');
+    else document.body.classList.remove('dark-mode');
+    updateDarkModeButton(user.isDarkMode);
+    loadNotificationSettings();
+}
+
+async function renderSystemHealth() {
+    const container = document.getElementById('healthStatusContent');
+    showLoading("Checking system health...");
+    
+    // Fetch control status
+    let controlStatus = { api: true, db: true };
+    try {
+        const statusRes = await fetch(`${API_BASE_URL}/admin/control/status`);
+        if (statusRes.ok) controlStatus = await statusRes.json();
+    } catch (e) { console.error(e); }
+
+    try {
+        const response = await fetch(`${API_BASE_URL}/admin/system-health`);
+        if (!response.ok) {
+            throw new Error(`HTTP Error: ${response.status} ${response.statusText}`);
+        }
+        const data = await response.json();
+        closeModal();
+        
+        const dbColor = data.dbStatus === 'Connected' ? '#28a745' : '#dc3545';
+        const apiColor = '#28a745'; 
+
+        let retryBtn = '';
+        if (data.dbStatus !== 'Connected') {
+            retryBtn = `<button class="confirm-btn" onclick="retryDbConnection()" style="background-color: #ffc107; color: #000; margin-top: 10px; width: 100%;"><i class="fa-solid fa-plug"></i> Retry Connection</button>`;
+        }
+
+        const apiListHtml = (data.subsystems || []).map(sub => `
+            <div style="display: flex; justify-content: space-between; padding: 10px; border-bottom: 1px solid #eee;">
+                <span style="font-weight:500;">${sub.name}</span>
+                <div style="display:flex; gap:10px; align-items:center;">
+                    <span style="font-weight: bold; color: ${sub.status === 'Operational' ? '#28a745' : (sub.status === 'Degraded' ? '#ffc107' : '#dc3545')}">
+                        ${sub.status === 'Operational' ? '<i class="fa-solid fa-check-circle"></i> Operational' : '<i class="fa-solid fa-circle-xmark"></i> ' + sub.status}
+                    </span>
+                    ${sub.name !== 'Authentication Module' ? `
+                        <button class="confirm-btn" style="padding: 2px 8px; font-size: 12px; ${sub.status === 'Operational' ? 'opacity:0.5; cursor:not-allowed;' : ''}" onclick="controlSubsystem('${sub.name}', 'start')" ${sub.status === 'Operational' ? 'disabled' : ''}>Start</button>
+                        <button class="delete-btn" style="padding: 2px 8px; font-size: 12px; ${sub.status !== 'Operational' ? 'opacity:0.5; cursor:not-allowed;' : ''}" onclick="controlSubsystem('${sub.name}', 'stop')" ${sub.status !== 'Operational' ? 'disabled' : ''}>Stop</button>
+                        <button class="main-btn" style="padding: 2px 8px; font-size: 12px; background-color: #ffc107; color: #000;" onclick="controlSubsystem('${sub.name}', 'restart')">Restart</button>
+                    ` : ''}
+                </div>
+            </div>
+        `).join('');
+
+        container.innerHTML = `
+            <div style="display: flex; gap: 20px; flex-wrap: wrap; margin-bottom: 20px;">
+                <div class="bill-card" style="flex: 1; min-width: 250px; border-left: 5px solid ${apiColor};">
+                    <h3>API Server</h3>
+                    <p><strong>Status:</strong> <span style="color:${apiColor}; font-weight:bold;">${data.apiStatus}</span></p>
+                    <p><strong>Uptime:</strong> ${formatUptime(data.uptime)}</p>
+                </div>
+                <div class="bill-card" style="flex: 1; min-width: 250px; border-left: 5px solid ${dbColor};">
+                    <h3>Database</h3>
+                    <p><strong>Status:</strong> <span style="color:${dbColor}; font-weight:bold;">${data.dbStatus}</span></p>
+                    <p><strong>Last Checked:</strong> ${new Date(data.timestamp).toLocaleString()}</p>
+                    ${retryBtn}
+                </div>
+            </div>
+            <div class="bill-card" style="border-left: 5px solid #17a2b8;">
+                <h3>API Health Check List</h3>
+                <div style="margin-top: 10px;">
+                    ${apiListHtml}
+                </div>
+            </div>
+            
+            <div class="bill-card" style="border-left: 5px solid #6f42c1; margin-top: 20px;">
+                <h3>System Controls</h3>
+                <div style="display: flex; gap: 20px; flex-wrap: wrap; margin-top: 15px;">
+                    
+                    <!-- API Control -->
+                    <div style="flex: 1; min-width: 200px; border: 1px solid #eee; padding: 15px; border-radius: 8px;">
+                        <h4>APIs</h4>
+                        <p>Status: <span style="font-weight:bold; color:${controlStatus.api ? 'green' : 'red'}">${controlStatus.api ? 'Running' : 'Stopped'}</span></p>
+                        <div style="display:flex; gap:10px;">
+                            <button class="confirm-btn" onclick="controlSystem('api', 'start')" ${controlStatus.api ? 'disabled style="opacity:0.5"' : ''}>Start</button>
+                            <button class="delete-btn" onclick="controlSystem('api', 'stop')" ${!controlStatus.api ? 'disabled style="opacity:0.5"' : ''}>Stop</button>
+                            <button class="main-btn" onclick="controlSystem('api', 'restart')" style="background-color: #ffc107; color: #000;">Restart</button>
+                        </div>
+                    </div>
+
+                    <!-- DB Control -->
+                    <div style="flex: 1; min-width: 200px; border: 1px solid #eee; padding: 15px; border-radius: 8px;">
+                        <h4>Database</h4>
+                        <p>Status: <span style="font-weight:bold; color:${controlStatus.db ? 'green' : 'red'}">${controlStatus.db ? 'Connected' : 'Disconnected'}</span></p>
+                        <div style="display:flex; gap:10px;">
+                            <button class="confirm-btn" onclick="controlSystem('db', 'start')" ${controlStatus.db ? 'disabled style="opacity:0.5"' : ''}>Start</button>
+                            <button class="delete-btn" onclick="controlSystem('db', 'stop')" ${!controlStatus.db ? 'disabled style="opacity:0.5"' : ''}>Stop</button>
+                            <button class="main-btn" onclick="controlSystem('db', 'restart')" style="background-color: #ffc107; color: #000;">Restart</button>
+                        </div>
+                    </div>
+
+                    <!-- Server Control -->
+                    <div style="flex: 1; min-width: 200px; border: 1px solid #eee; padding: 15px; border-radius: 8px;">
+                        <h4>Server</h4>
+                        <p>Status: <span style="font-weight:bold; color:green">Running</span></p>
+                        <div style="display:flex; gap:10px;">
+                            <button class="confirm-btn" disabled style="opacity:0.5; cursor:not-allowed;" title="Cannot start server remotely">Start</button>
+                            <button class="delete-btn" onclick="controlSystem('server', 'stop')">Stop</button>
+                            <button class="main-btn" onclick="restartServer()" style="background-color: #ffc107; color: #000;">
+                                <i class="fa-solid fa-rotate-right"></i> Restart
+                            </button>
+                        </div>
+                        <p style="font-size:11px; color:#666; margin-top:5px;">* Manual restart required if stopped.</p>
+                    </div>
+
+                </div>
+            </div>
+        `;
+    } catch (e) {
+        closeModal();
+        console.error("System Health Check Failed:", e);
+        container.innerHTML = `<p style="color:red">Failed to fetch system health. API might be down.<br><small>${e.message}</small></p>`;
+    }
+}
+
+async function controlSystem(component, action) {
+    if (component === 'server' && action === 'stop') {
+        if (!confirm("Are you sure you want to stop the server? You will lose access to the dashboard and must restart the server manually from the terminal.")) return;
+    }
+
+    showLoading(`Processing ${component} ${action}...`);
+    try {
+        const response = await fetch(`${API_BASE_URL}/admin/control/${component}`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ action })
+        });
+        const result = await response.json();
+        closeModal();
+        showModal(result.message);
+        if (component !== 'server') {
+            if (component === 'api' && action === 'restart') {
+                setTimeout(renderSystemHealth, 2000);
+            } else {
+                renderSystemHealth(); // Refresh UI
+            }
+        }
+    } catch (e) {
+        closeModal();
+        showModal("Operation failed.");
+    }
+}
+
+async function restartServer() {
+    if (!confirm("This will restart the backend server and reload the application. Continue?")) return;
+    showLoading("Restarting server...");
+    try {
+        await fetch(`${API_BASE_URL}/admin/control/restart`, { method: 'POST' });
+    } catch (e) { /* Ignore network error as server goes down */ }
+    
+    // Wait for restart then reload
+    setTimeout(() => {
+        window.location.reload();
+    }, 3000);
+}
+
+async function controlSubsystem(subsystem, action) {
+    showLoading(`Processing ${subsystem} ${action}...`);
+    try {
+        const response = await fetch(`${API_BASE_URL}/admin/control/api`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ action, subsystem })
+        });
+        const result = await response.json();
+        closeModal();
+        showModal(result.message);
+        if (action === 'restart') {
+            setTimeout(renderSystemHealth, 2000);
+        } else {
+            renderSystemHealth(); // Refresh UI
+        }
+    } catch (e) {
+        closeModal();
+        showModal("Operation failed.");
+    }
+}
+
+function renderBackupRestore() {
+    const container = document.getElementById('backupContent');
+    container.innerHTML = `
+        <div style="display: flex; gap: 20px; flex-wrap: wrap;">
+            <div class="bill-card" style="flex: 1; min-width: 300px; border-left: 5px solid #28a745;">
+                <h3><i class="fa-solid fa-download"></i> Backup Database</h3>
+                <p>Download a full backup of all users, rooms, guests, and history as a JSON file.</p>
+                <button class="confirm-btn" onclick="downloadBackup()" style="margin-top: 10px;">Download Backup</button>
+            </div>
+            <div class="bill-card" style="flex: 1; min-width: 300px; border-left: 5px solid #dc3545;">
+                <h3><i class="fa-solid fa-upload"></i> Restore Database</h3>
+                <p>Upload a previously downloaded backup file to restore the database. <strong>Warning: This will overwrite current data.</strong></p>
+                <input type="file" id="restoreFileInput" accept=".json" style="margin-top: 10px;">
+                <button class="delete-btn" onclick="restoreDatabase()" style="margin-top: 10px;">Restore Data</button>
+            </div>
+        </div>
+    `;
+}
+
+async function downloadBackup() {
+    showLoading("Generating backup...");
+    try {
+        const response = await fetch(`${API_BASE_URL}/admin/backup`);
+        const data = await response.json();
+        
+        const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(data));
+        const downloadAnchorNode = document.createElement('a');
+        downloadAnchorNode.setAttribute("href", dataStr);
+        downloadAnchorNode.setAttribute("download", "hms_backup_" + new Date().toISOString().slice(0,10) + ".json");
+        document.body.appendChild(downloadAnchorNode);
+        downloadAnchorNode.click();
+        downloadAnchorNode.remove();
+        closeModal();
+    } catch (e) {
+        closeModal();
+        showModal("Backup failed.");
+    }
+}
+
+async function restoreDatabase() {
+    const fileInput = document.getElementById('restoreFileInput');
+    if (!fileInput.files.length) return showModal("Please select a backup file first.");
+    
+    const file = fileInput.files[0];
+    const reader = new FileReader();
+    
+    reader.onload = async function(e) {
+        try {
+            const backupData = JSON.parse(e.target.result);
+            showModal("Are you sure you want to restore? This will DELETE all current data and replace it with the backup.", async () => {
+                showLoading("Restoring database... This may take a moment.");
+                const response = await fetch(`${API_BASE_URL}/admin/restore`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(backupData)
+                });
+                const result = await response.json();
+                closeModal();
+                showModal(result.message);
+            });
+        } catch (err) {
+            showModal("Invalid backup file.");
+        }
+    };
+    reader.readAsText(file);
+}
+
+async function retryDbConnection() {
+    showLoading("Attempting to reconnect to database...");
+    try {
+        const response = await fetch(`${API_BASE_URL}/admin/system-health/reconnect-db`, { method: 'POST' });
+        const result = await response.json();
+        closeModal();
+        if (response.ok) {
+            showModal(result.message);
+            renderSystemHealth();
+        } else {
+            showModal(result.message || "Reconnection failed.");
+            renderSystemHealth();
+        }
+    } catch (e) {
+        closeModal();
+        showModal("Network error during reconnection.");
+    }
+}
+
+function formatUptime(seconds) {
+    const d = Math.floor(seconds / (3600*24));
+    const h = Math.floor(seconds % (3600*24) / 3600);
+    const m = Math.floor(seconds % 3600 / 60);
+    const s = Math.floor(seconds % 60);
+    return `${d}d ${h}h ${m}m ${s}s`;
+}
+
+// --- BROADCAST SYSTEM ---
+function openBroadcastModal() {
+    const modal = document.getElementById('actionModal');
+    const modalBox = document.getElementById('modalBox');
+    modalBox.innerHTML = `
+        <h3 style="margin-top:0;">Broadcast Message</h3>
+        <p style="font-size:12px; color:#666;">This message will be visible to all hotel owners on their dashboard.</p>
+        <textarea id="broadcastMessageInput" rows="4" style="width: 100%; padding: 8px; margin: 8px 0; box-sizing: border-box; font-family: inherit;" placeholder="Enter message..."></textarea>
+        <div style="margin-top: 15px; display: flex; gap: 10px; justify-content: center;">
+            <button class="confirm-btn" onclick="sendBroadcast()">Send Broadcast</button>
+            <button class="cancel-btn" onclick="closeModal()">Cancel</button>
+        </div>
+    `;
+    modal.style.display = 'flex';
+}
+
+async function sendBroadcast() {
+    const message = document.getElementById('broadcastMessageInput').value.trim();
+    if (!message) return showModal('Message cannot be empty.');
+    
+    try {
+        showLoading("Sending broadcast...");
+        const response = await fetch(`${API_BASE_URL}/admin/broadcast`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ message })
+        });
+        const result = await response.json();
+        closeModal();
+        showModal(result.message);
+    } catch (e) {
+        closeModal();
+        showModal('Failed to send broadcast.');
+    }
+}
+
+function openOwnerBroadcastModal() {
+    const modal = document.getElementById('actionModal');
+    const modalBox = document.getElementById('modalBox');
+    modalBox.innerHTML = `
+        <h3 style="margin-top:0;">Broadcast to Staff</h3>
+        <p style="font-size:12px; color:#666;">This message will be visible to all employees of <strong>${user.hotelName}</strong> on their dashboard.</p>
+        <textarea id="ownerBroadcastMessageInput" rows="4" style="width: 100%; padding: 8px; margin: 8px 0; box-sizing: border-box; font-family: inherit;" placeholder="Enter message for your staff..."></textarea>
+        <div style="margin-top: 15px; display: flex; gap: 10px; justify-content: center;">
+            <button class="confirm-btn" onclick="sendOwnerBroadcast()">Send</button>
+            <button class="cancel-btn" onclick="closeModal()">Cancel</button>
+        </div>
+    `;
+    modal.style.display = 'flex';
+}
+
+async function sendOwnerBroadcast() {
+    const message = document.getElementById('ownerBroadcastMessageInput').value.trim();
+    if (!message) return showModal('Message cannot be empty.');
+    
+    try {
+        showLoading("Sending broadcast...");
+        const response = await fetch(`${API_BASE_URL}/owner/broadcast`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ message, hotelName: user.hotelName })
+        });
+        const result = await response.json();
+        closeModal();
+        showModal(result.message);
+    } catch (e) {
+        closeModal();
+        showModal('Failed to send broadcast.');
+    }
+}
+
+async function checkBroadcasts() {
+    let url = '';
+    let title = '';
+    
+    if (user.role === 'Owner') {
+        url = `${API_BASE_URL}/broadcast`; // Admin to Owner
+        title = 'Admin Announcement';
+    } else if (user.role !== 'Admin' && user.role !== 'Room') {
+        url = `${API_BASE_URL}/hotel/broadcast?hotelName=${encodeURIComponent(user.hotelName)}`; // Owner to Staff
+        title = 'Message from Owner';
+    } else {
+        return;
+    }
+
+    try {
+        const response = await fetch(url);
+        if (!response.ok) return;
+        const data = await response.json();
+        if (data && data.MESSAGE) {
+            const msgSignature = data.CREATED_AT + '_' + data.MESSAGE;
+            const lastSeen = user.lastReadBroadcast;
+            if (lastSeen !== msgSignature) {
+                const banner = document.createElement('div');
+                banner.className = 'broadcast-banner';
+                banner.style.cssText = 'background-color: #ffc107; color: #333; padding: 15px; margin-bottom: 20px; border-radius: 8px; display: flex; justify-content: space-between; align-items: center; box-shadow: 0 2px 5px rgba(0,0,0,0.1); animation: fadeIn 0.5s;';
+                banner.innerHTML = `
+                    <div style="display:flex; align-items:center; gap:15px;">
+                        <div style="background: rgba(255,255,255,0.3); padding: 10px; border-radius: 50%;">
+                            <i class="fa-solid fa-bullhorn" style="font-size: 1.5em; color: #333;"></i>
+                        </div>
+                        <div>
+                            <strong style="display:block; font-size:0.9em; opacity:0.8; text-transform:uppercase; letter-spacing:0.5px;">${title}</strong>
+                            <span style="font-weight: 500; font-size: 1.1em;">${data.MESSAGE}</span>
+                        </div>
+                    </div>
+                    <button onclick="markBroadcastRead(this, '${msgSignature}')" style="background: #fff; border: none; padding: 8px 15px; border-radius: 20px; cursor: pointer; font-size: 13px; font-weight: bold; color: #333; box-shadow: 0 2px 4px rgba(0,0,0,0.1); display:flex; align-items:center; gap:5px;">
+                        <i class="fa-solid fa-check"></i> Mark as Read
+                    </button>
+                `;
+                const mainContent = document.querySelector('.main-content');
+                if (mainContent) mainContent.insertBefore(banner, mainContent.firstChild);
+
+                // Add Notification Badge to Sidebar
+                const sidebarList = document.querySelector('.sidebar ul');
+                if (sidebarList && !document.getElementById('broadcastBadge')) {
+                    const badgeLi = document.createElement('li');
+                    badgeLi.id = 'broadcastBadge';
+                    badgeLi.style.cssText = 'background: #ffc107; color: #000; font-weight: bold; animation: pulse 2s infinite;';
+                    badgeLi.innerHTML = `<i class="fa-solid fa-bell"></i> New Announcement`;
+                    badgeLi.onclick = () => {
+                        banner.scrollIntoView({ behavior: 'smooth' });
+                    };
+                    sidebarList.insertBefore(badgeLi, sidebarList.firstChild);
+                }
+            }
+        }
+    } catch (e) { console.error("Broadcast check failed", e); }
+}
+
+window.markBroadcastRead = async function(btn, signature) {
+    try {
+        await fetch(`${API_BASE_URL}/users/${user.userId}`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ lastReadBroadcast: signature })
+        });
+        user.lastReadBroadcast = signature;
+        localStorage.setItem('hmsCurrentUser', JSON.stringify(user));
+    } catch(e) { console.error("Failed to mark read", e); }
+
+    const banner = btn.closest('.broadcast-banner');
+    if (banner) banner.remove(); // Remove banner
+    const badge = document.getElementById('broadcastBadge');
+    if (badge) badge.remove(); // Remove sidebar badge
+};
+
+// --- ADMIN GLOBAL SEARCH & NOTIFICATIONS ---
+async function performGlobalSearch() {
+    const query = document.getElementById('globalSearchInput').value.trim();
+    if (!query) return;
+
+    showLoading("Searching...");
+    try {
+        const response = await fetch(`${API_BASE_URL}/admin/search?q=${encodeURIComponent(query)}`);
+        const results = await response.json();
+        closeModal();
+
+        const modal = document.getElementById('actionModal');
+        const modalBox = document.getElementById('modalBox');
+        
+        let html = `<h3 style="margin-top:0;">Search Results for "${query}"</h3>`;
+        if (results.length === 0) {
+            html += '<p>No results found.</p>';
+        } else {
+            html += '<div style="max-height:400px; overflow-y:auto; text-align:left;">';
+            results.forEach(r => {
+                const icon = r.TYPE === 'Guest' ? 'fa-user' : 'fa-calendar-check';
+                const color = r.TYPE === 'Guest' ? '#007bff' : '#28a745';
+                html += `
+                    <div style="padding:10px; border-bottom:1px solid #eee; display:flex; gap:10px; align-items:center;">
+                        <div style="background:${color}; color:white; width:30px; height:30px; border-radius:50%; display:flex; align-items:center; justify-content:center;">
+                            <i class="fa-solid ${icon}"></i>
+                        </div>
+                        <div>
+                            <div style="font-weight:bold;">${r.NAME} <span style="font-size:11px; color:#666; font-weight:normal;">(${r.HOTEL_NAME})</span></div>
+                            <div style="font-size:12px; color:#555;">${r.INFO} | ${r.CONTACT || 'No Contact'}</div>
+                        </div>
+                    </div>
+                `;
+            });
+            html += '</div>';
+        }
+        html += '<div style="text-align:center; margin-top:15px;"><button class="cancel-btn" onclick="closeModal()">Close</button></div>';
+        
+        modalBox.innerHTML = html;
+        modal.style.display = 'flex';
+    } catch (e) {
+        closeModal();
+        showModal("Search failed.");
+    }
+}
+
+async function fetchNotifications(badgeId, listId) {
+    const badge = document.getElementById(badgeId);
+    const list = document.getElementById(listId);
+    if (!badge || !list) return;
+
+    try {
+        const response = await fetch(`${API_BASE_URL}/notifications?role=${user.role}&hotelName=${encodeURIComponent(getContextHotel() || '')}`);
+        if (!response.ok) return; // Stop if endpoint is missing (404) or server error (500)
+        const notifs = await response.json();
+        
+        // Sound Alert Logic
+        let hasNew = false;
+        // Use composite key (Title + ID) to ensure uniqueness across different tables
+        notifs.forEach(n => {
+            const uniqueId = `${n.TITLE}_${n.ID}`;
+            if (!knownNotificationIds.has(uniqueId)) {
+                hasNew = true;
+                knownNotificationIds.add(uniqueId);
+            }
+        });
+        
+        if (hasNew && userInteracted) {
+            notificationSound.currentTime = 0;
+            notificationSound.play().catch(e => console.warn("Sound blocked:", e));
+        }
+
+        // Filter out read notifications for the badge count
+        const unreadCount = notifs.filter(n => !readNotificationIds.has(`${n.TITLE}_${n.ID}`)).length;
+        
+        badge.style.display = unreadCount > 0 ? 'block' : 'none';
+        badge.textContent = unreadCount;
+
+        list.innerHTML = notifs.length === 0 ? '<p style="padding:10px; color:#666; margin:0;">No new notifications</p>' : 
+            notifs.map(n => {
+                const uniqueId = `${n.TITLE}_${n.ID}`;
+                const isRead = readNotificationIds.has(uniqueId);
+                return `
+                <div onclick="handleNotificationClick('${n.TITLE}')" style="padding:10px; border-bottom:1px solid #eee; cursor:pointer; background: ${isRead ? '#fff' : '#f0f8ff'}; transition: background 0.2s;" onmouseover="this.style.background='#e9ecef'" onmouseout="this.style.background='${isRead ? '#fff' : '#f0f8ff'}'">
+                    <div style="font-weight:bold; font-size:13px;">${n.TITLE}</div>
+                    <div style="font-size:12px; color:#555;">${n.MESSAGE}</div>
+                </div>
+            `}).join('');
+    } catch (e) { /* Ignore polling errors to prevent console spam */ }
+}
+
+function handleNotificationClick(title) {
+    if (title.includes('Booking')) openTab('checkinContainer', document.querySelector('li[onclick*="checkinContainer"]'));
+    else if (title.includes('Order') && user.role === 'Chef') openTab('kitchenContainer', document.querySelector('li[onclick*="kitchenContainer"]'));
+    else if (title.includes('Order') && user.role === 'Waiter') openTab('deliveryContainer', document.querySelector('li[onclick*="deliveryContainer"]'));
+    else if (title.includes('Service')) openTab('housekeepingContainer', document.querySelector('li[onclick*="housekeepingContainer"]'));
+    else if (title.includes('Order')) openTab('billingContainer', document.querySelector('li[onclick*="billingContainer"]')); // For Owner/Admin
+}
+
+async function markAllNotificationsRead(badgeId, listId) {
+    // Add all currently known IDs to the read set
+    knownNotificationIds.forEach(id => readNotificationIds.add(id));
+    
+    // Save to DB
+    try {
+        await fetch(`${API_BASE_URL}/users/${user.userId}`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ readNotifications: JSON.stringify(Array.from(readNotificationIds)) })
+        });
+    } catch(e) { console.error("Failed to save read notifications", e); }
+
+    // Trigger a refresh to update UI immediately
+    fetchNotifications(badgeId, listId);
+}

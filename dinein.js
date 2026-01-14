@@ -1,4 +1,4 @@
-const API_BASE_URL = 'http://localhost:3000/api';
+const API_BASE_URL = '/api';
 
 // --- AUTH CHECK ---
 const currentUser = JSON.parse(localStorage.getItem('hmsCurrentUser'));
@@ -83,7 +83,7 @@ async function renderMenu(isBackgroundUpdate = false) {
     if (!isBackgroundUpdate) container.innerHTML = '<div class="custom-loader"></div><p style="text-align:center; color:#666;">Loading menu...</p>';
     
     try {
-        const response = await fetch(`${API_BASE_URL}/menu`);
+        const response = await fetch(`${API_BASE_URL}/menu?hotelName=${encodeURIComponent(currentUser.hotelName)}`);
         MENU_ITEMS = await response.json();
     } catch (e) {
         if (!isBackgroundUpdate) container.innerHTML = '<p>Failed to load menu.</p>';
@@ -154,7 +154,8 @@ async function placeOrder() {
         items: cart,
         totalCost: cart.reduce((sum, item) => sum + item.price, 0),
         status: 'Pending', // Initial status for Chef
-        timestamp: new Date().toISOString()
+        timestamp: new Date().toISOString(),
+        hotelName: currentUser.hotelName
     };
 
     try {
@@ -193,7 +194,7 @@ async function submitServiceRequest() {
         const response = await fetch(`${API_BASE_URL}/service-requests`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ roomNumber: currentRoom, requestType, comments })
+            body: JSON.stringify({ roomNumber: currentRoom, requestType, comments, hotelName: currentUser.hotelName })
         });
 
         const result = await response.json();
