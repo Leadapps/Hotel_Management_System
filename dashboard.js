@@ -1,5 +1,5 @@
 // --- CONFIG & USER SESSION ---
-let user = JSON.parse(localStorage.getItem('hmsCurrentUser'));
+let user = JSON.parse(localStorage.getItem('hmsCurrentUser') || sessionStorage.getItem('hmsCurrentUser'));
 if (!user) window.location.href = "index.html";
 
 const userInfoEl = document.getElementById('userInfo');
@@ -63,7 +63,10 @@ async function toggleDarkMode() {
             body: JSON.stringify({ isDarkMode: isDark })
         });
         user.isDarkMode = isDark;
-        localStorage.setItem('hmsCurrentUser', JSON.stringify(user));
+        
+        // Update in whichever storage is being used
+        if (localStorage.getItem('hmsCurrentUser')) localStorage.setItem('hmsCurrentUser', JSON.stringify(user));
+        else sessionStorage.setItem('hmsCurrentUser', JSON.stringify(user));
     } catch(e) { console.error("Failed to save dark mode", e); }
 
     updateDarkModeButton(isDark);
@@ -418,6 +421,19 @@ function setupOwnerUI() {
     // Align to top-right, transparent background to look like a floating header action
     toolbar.style.cssText = 'display: flex; justify-content: flex-end; padding: 10px 0; margin-bottom: 10px; gap: 15px; align-items: center;';
 
+    // Share Button
+    const shareBtn = document.createElement('button');
+    shareBtn.className = 'main-btn';
+    shareBtn.innerHTML = '<i class="fa-solid fa-share-nodes"></i> Share Hotel';
+    shareBtn.onclick = () => {
+        // Fallback to constructing slug from name if not in user object
+        const slug = user.hotelSlug || user.hotelName.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+        const url = `${window.location.origin}/${slug}`;
+        openShareModal(url, user.hotelName);
+    };
+    shareBtn.style.boxShadow = '0 2px 5px rgba(0,0,0,0.15)';
+    toolbar.appendChild(shareBtn);
+
     // Notification Bell
     const notifContainer = createNotificationElement('ownerNotifBadge', 'ownerNotifDropdown', 'ownerNotifList');
     toolbar.appendChild(notifContainer);
@@ -532,16 +548,25 @@ async function renderOwnerManagement() {
         container.innerHTML = `
             <table>
                 <thead>
-                    <tr><th>Hotel Name</th><th>Owner Name</th><th>Email</th><th>Mobile</th><th>Address</th><th>Actions</th></tr>
+                    <tr><th>Hotel Name</th><th>Guest URL</th><th>Owner Name</th><th>Email</th><th>Mobile</th><th>Actions</th></tr>
                 </thead>
                 <tbody>
                     ${owners.map(o => `
                         <tr>
                             <td style="font-weight:bold; color:#007bff;">${o.HOTEL_NAME}</td>
+                            <td>
+                                <div style="display:flex; align-items:center; gap:8px;">
+                                    <a href="/${o.HOTEL_SLUG || '#'}" target="_blank" style="color:#28a745; text-decoration:none; font-size:12px; max-width:100px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${o.HOTEL_SLUG || 'N/A'}</a>
+                                    ${o.HOTEL_SLUG ? `
+                                    <i class="fa-solid fa-copy" style="cursor:pointer; color:#666; font-size:14px;" title="Copy Link" onclick="copyToClipboard('${window.location.origin}/${o.HOTEL_SLUG}')"></i>
+                                    <i class="fa-solid fa-qrcode" style="cursor:pointer; color:#007bff; font-size:14px;" title="Show QR Code" onclick="openShareModal('${window.location.origin}/${o.HOTEL_SLUG}', '${o.HOTEL_NAME.replace(/'/g, "\\'")}')"></i>
+                                    <i class="fa-solid fa-rotate" style="cursor:pointer; color:#dc3545; font-size:14px;" title="Regenerate Slug" onclick="regenerateHotelSlug(${o.USER_ID}, '${o.HOTEL_NAME.replace(/'/g, "\\'")}')"></i>
+                                    ` : ''}
+                                </div>
+                            </td>
                             <td>${o.FULL_NAME}</td>
                             <td>${o.EMAIL}</td>
                             <td>${o.MOBILE_NUMBER}</td>
-                            <td>${o.ADDRESS || '-'}</td>
                             <td>
                                 <button class="edit-btn" onclick='editOwner(${JSON.stringify(o).replace(/'/g, "&#39;")})' title="Edit Owner Details">
                                     <i class="fa-solid fa-pen"></i>
@@ -617,6 +642,58 @@ async function deleteOwner(userId, name) {
             showModal('Failed to delete owner.');
         }
     });
+}
+
+async function regenerateHotelSlug(userId, hotelName) {
+    showModal(`Are you sure you want to regenerate the URL slug for ${hotelName}?\nThe old link will stop working immediately.`, async () => {
+        try {
+            showLoading("Regenerating slug...");
+            const response = await fetch(`${API_BASE_URL}/admin/regenerate-slug`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ userId })
+            });
+            const result = await response.json();
+            showModal(result.message);
+            if (response.ok) renderOwnerManagement();
+        } catch (e) {
+            showModal('Failed to regenerate slug.');
+        }
+    });
+}
+
+function openShareModal(url, hotelName) {
+    const modal = document.getElementById('actionModal');
+    const modalBox = document.getElementById('modalBox');
+    
+    modalBox.innerHTML = `
+        <h3 style="margin-top:0;">Share ${hotelName}</h3>
+        <div style="text-align:center; margin: 20px 0;">
+            <img src="https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(url)}" style="border: 1px solid #ddd; padding: 10px; border-radius: 8px;">
+            <p style="margin-top:10px; font-size:12px; color:#666;">Scan to visit guest page</p>
+            <div style="display:flex; gap:5px; justify-content:center; margin-top:15px;">
+                <input type="text" value="${url}" readonly style="width:200px; padding:5px; font-size:12px; border:1px solid #ccc; border-radius:4px;">
+                <button class="main-btn" onclick="copyToClipboard('${url}')" style="padding: 5px 10px;"><i class="fa-solid fa-copy"></i></button>
+            </div>
+        </div>
+        <button class="cancel-btn" onclick="closeModal()" style="width:100%;">Close</button>
+    `;
+    modal.style.display = 'flex';
+}
+
+function copyToClipboard(text) {
+    navigator.clipboard.writeText(text).then(() => {
+        // Show a temporary tooltip or toast ideally, but alert is simple for now
+        const btn = event.target.closest('button') || event.target;
+        const originalHTML = btn.innerHTML;
+        // Visual feedback
+        if(btn.tagName === 'I') btn.style.color = '#28a745';
+        else btn.innerHTML = '<i class="fa-solid fa-check"></i>';
+        setTimeout(() => {
+            if(btn.tagName === 'I') btn.style.color = '#666';
+            else btn.innerHTML = originalHTML;
+        }, 1500);
+    }).catch(err => console.error('Failed to copy', err));
 }
 
 function openCreateOwnerModal() {
@@ -799,6 +876,7 @@ function logout() {
     if (user.role === 'Room') return; // Prevent logout for Room users
     showModal("Are you sure you want to logout?", () => {
         localStorage.removeItem('hmsCurrentUser');
+        sessionStorage.removeItem('hmsCurrentUser');
         window.location.href = "index.html";
     });
 }
@@ -2379,7 +2457,8 @@ async function refreshUserProfile() {
         const response = await fetch(`${API_BASE_URL}/users/${user.username}`);
         if (response.ok) {
             const updatedUser = await response.json();
-            localStorage.setItem('hmsCurrentUser', JSON.stringify(updatedUser));
+            if (localStorage.getItem('hmsCurrentUser')) localStorage.setItem('hmsCurrentUser', JSON.stringify(updatedUser));
+            else sessionStorage.setItem('hmsCurrentUser', JSON.stringify(updatedUser));
             user = updatedUser; 
             
             // Refresh read notifications set
@@ -2843,7 +2922,8 @@ window.updateVolume = async function(val) {
             body: JSON.stringify({ notificationVolume: val })
         });
         user.notificationVolume = val;
-        localStorage.setItem('hmsCurrentUser', JSON.stringify(user));
+        if (localStorage.getItem('hmsCurrentUser')) localStorage.setItem('hmsCurrentUser', JSON.stringify(user));
+        else sessionStorage.setItem('hmsCurrentUser', JSON.stringify(user));
     } catch(e) { console.error("Failed to save volume", e); }
 };
 
@@ -2860,7 +2940,8 @@ window.saveCustomSound = function(input) {
                     body: JSON.stringify({ notificationSound: e.target.result })
                 });
                 user.notificationSound = e.target.result;
-                localStorage.setItem('hmsCurrentUser', JSON.stringify(user));
+                if (localStorage.getItem('hmsCurrentUser')) localStorage.setItem('hmsCurrentUser', JSON.stringify(user));
+                else sessionStorage.setItem('hmsCurrentUser', JSON.stringify(user));
                 closeModal();
                 alert("Sound updated!");
             } catch(err) { closeModal(); alert("Failed to save sound."); }
@@ -2877,7 +2958,8 @@ window.resetSound = async function() {
         body: JSON.stringify({ notificationSound: null })
     });
     user.notificationSound = null;
-    localStorage.setItem('hmsCurrentUser', JSON.stringify(user));
+    if (localStorage.getItem('hmsCurrentUser')) localStorage.setItem('hmsCurrentUser', JSON.stringify(user));
+    else sessionStorage.setItem('hmsCurrentUser', JSON.stringify(user));
     loadNotificationSettings();
     alert("Sound reset to default.");
 };
@@ -3493,6 +3575,18 @@ document.addEventListener('DOMContentLoaded', async () => {
                 `;
                 document.querySelector('.main-content').appendChild(div);
                 
+                // Inject Hotel Features Tab for Owner
+                const liFeatures = document.createElement('li');
+                liFeatures.innerHTML = '<i class="fa-solid fa-star"></i> Hotel Features';
+                liFeatures.onclick = function() { openTab('hotelFeaturesContainer', this); renderHotelFeatures(); };
+                sidebarList.insertBefore(liFeatures, sidebarList.lastElementChild);
+
+                const divFeatures = document.createElement('div');
+                divFeatures.id = 'hotelFeaturesContainer';
+                divFeatures.className = 'tab-content';
+                divFeatures.innerHTML = `<h2>Hotel Features</h2><div id="hotelFeaturesList"></div>`;
+                document.querySelector('.main-content').appendChild(divFeatures);
+
                 // Add styles for pagination buttons
                 const style = document.createElement('style');
                 style.innerHTML = `
@@ -4004,7 +4098,8 @@ window.markBroadcastRead = async function(btn, signature) {
             body: JSON.stringify({ lastReadBroadcast: signature })
         });
         user.lastReadBroadcast = signature;
-        localStorage.setItem('hmsCurrentUser', JSON.stringify(user));
+        if (localStorage.getItem('hmsCurrentUser')) localStorage.setItem('hmsCurrentUser', JSON.stringify(user));
+        else sessionStorage.setItem('hmsCurrentUser', JSON.stringify(user));
     } catch(e) { console.error("Failed to mark read", e); }
 
     const banner = btn.closest('.broadcast-banner');
@@ -4012,6 +4107,107 @@ window.markBroadcastRead = async function(btn, signature) {
     const badge = document.getElementById('broadcastBadge');
     if (badge) badge.remove(); // Remove sidebar badge
 };
+
+// --- HOTEL FEATURES MANAGEMENT ---
+async function renderHotelFeatures() {
+    const container = document.getElementById('hotelFeaturesList');
+    if (!container) return;
+
+    setupHeaderAction('hotelFeaturesList', 'addFeatureBtn', 'Add Feature', () => openFeatureModal());
+
+    showLoading("Loading features...");
+    try {
+        const response = await fetch(`${API_BASE_URL}/hotel-features?hotelName=${encodeURIComponent(getContextHotel())}`);
+        const features = await response.json();
+        closeModal();
+
+        if (features.length === 0) {
+            container.innerHTML = '<p>No features added yet.</p>';
+            return;
+        }
+
+        container.innerHTML = `
+            <table class="styled-table">
+                <thead><tr><th>Feature Description</th><th style="width:100px;">Action</th></tr></thead>
+                <tbody>
+                    ${features.map(f => `
+                        <tr>
+                            <td style="text-align:left; padding-left:20px;">${f.FEATURE_TEXT}</td>
+                            <td><button class="delete-btn" onclick="deleteHotelFeature(${f.ID})"><i class="fa-solid fa-trash"></i></button></td>
+                        </tr>
+                    `).join('')}
+                </tbody>
+            </table>
+        `;
+    } catch (e) {
+        closeModal();
+        container.innerHTML = '<p>Error loading features.</p>';
+    }
+}
+
+function openFeatureModal() {
+    const modal = document.getElementById('actionModal');
+    const modalBox = document.getElementById('modalBox');
+    modalBox.innerHTML = `
+        <h3 style="margin-top:0;">Add Hotel Feature</h3>
+        <input type="text" id="newFeatureText" placeholder="e.g., Free Wi-Fi, Swimming Pool" style="width: 100%; padding: 8px; margin: 8px 0; box-sizing: border-box;">
+        
+        <label style="display:block; text-align:left; font-size:12px; margin-top:5px;">Select Icon</label>
+        <select id="newFeatureIcon" style="width: 100%; padding: 8px; margin: 5px 0 8px 0; box-sizing: border-box; font-family: 'FontAwesome', 'Poppins', sans-serif;">
+            <option value="fa-star">&#xf005; Star (Default)</option>
+            <option value="fa-wifi">&#xf1eb; Wi-Fi</option>
+            <option value="fa-person-swimming">&#xf5c4; Pool</option>
+            <option value="fa-square-parking">&#xf540; Parking</option>
+            <option value="fa-snowflake">&#xf2dc; AC</option>
+            <option value="fa-utensils">&#xf2e7; Restaurant</option>
+            <option value="fa-martini-glass">&#xf561; Bar</option>
+            <option value="fa-dumbbell">&#xf44b; Gym</option>
+            <option value="fa-tv">&#xf26c; TV</option>
+            <option value="fa-spa">&#xf5bb; Spa</option>
+            <option value="fa-bell-concierge">&#xf562; Room Service</option>
+        </select>
+
+        <div style="margin-top: 15px; display: flex; gap: 10px; justify-content: center;">
+            <button class="confirm-btn" onclick="saveHotelFeature()">Add</button>
+            <button class="cancel-btn" onclick="closeModal()">Cancel</button>
+        </div>
+    `;
+    modal.style.display = 'flex';
+}
+
+async function saveHotelFeature() {
+    const featureText = document.getElementById('newFeatureText').value.trim();
+    const icon = document.getElementById('newFeatureIcon').value;
+    if (!featureText) return alert("Feature text is required.");
+
+    try {
+        await fetch(`${API_BASE_URL}/hotel-features`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ featureText, icon, hotelName: getContextHotel() })
+        });
+        closeModal();
+        renderHotelFeatures();
+    } catch (e) { alert("Failed to add feature."); }
+}
+
+async function deleteHotelFeature(id) {
+    if (!confirm("Delete this feature?")) return;
+    try {
+        await fetch(`${API_BASE_URL}/hotel-features/${id}`, { method: 'DELETE' });
+        renderHotelFeatures();
+    } catch (e) { alert("Failed to delete feature."); }
+}
+
+async function saveScrollSpeed(speed) {
+    try {
+        await fetch(`${API_BASE_URL}/users/${user.userId}`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ featureScrollSpeed: speed })
+        });
+    } catch (e) { console.error("Failed to save speed", e); }
+}
 
 // --- ADMIN GLOBAL SEARCH & NOTIFICATIONS ---
 async function performGlobalSearch() {

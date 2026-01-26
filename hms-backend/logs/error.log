@@ -1,0 +1,48 @@
+[2026-01-26T10:13:49.009Z] [ERROR] 
+⚠️ WARNING: Email credentials are not configured.
+[2026-01-26T10:13:49.011Z] [ERROR] Please add EMAIL_USER and EMAIL_PASS to your .env file.
+[2026-01-26T10:13:49.014Z] [ERROR] -------------------------------------------------
+[2026-01-26T10:13:49.016Z] [ERROR] EMAIL_USER=your-email@gmail.com
+[2026-01-26T10:13:49.020Z] [ERROR] EMAIL_PASS=your-app-password
+[2026-01-26T10:13:49.023Z] [ERROR] -------------------------------------------------
+
+[2026-01-26T11:05:04.598Z] [ERROR] 
+⚠️ WARNING: Email credentials are not configured.
+[2026-01-26T11:05:04.600Z] [ERROR] Please add EMAIL_USER and EMAIL_PASS to your .env file.
+[2026-01-26T11:05:04.603Z] [ERROR] EMAIL_USER=your-email@gmail.com
+[2026-01-26T11:05:04.606Z] [ERROR] -------------------------------------------------
+
+[2026-01-26T11:05:04.604Z] [ERROR] EMAIL_PASS=your-app-password
+[2026-01-26T11:05:04.602Z] [ERROR] -------------------------------------------------
+[2026-01-26T11:20:50.201Z] [ERROR] 
+⚠️ WARNING: Email credentials are not configured.
+[2026-01-26T11:20:50.202Z] [ERROR] Please add EMAIL_USER and EMAIL_PASS to your .env file.
+[2026-01-26T11:20:50.203Z] [ERROR] -------------------------------------------------
+[2026-01-26T11:20:50.204Z] [ERROR] EMAIL_USER=your-email@gmail.com
+[2026-01-26T11:20:50.206Z] [ERROR] EMAIL_PASS=your-app-password
+[2026-01-26T11:20:50.207Z] [ERROR] -------------------------------------------------
+
+[2026-01-26T12:53:04.507Z] [ERROR] 
+⚠️ WARNING: Email credentials are not configured.
+[2026-01-26T12:53:04.509Z] [ERROR] Please add EMAIL_USER and EMAIL_PASS to your .env file.
+[2026-01-26T12:53:04.511Z] [ERROR] EMAIL_USER=your-email@gmail.com
+[2026-01-26T12:53:04.510Z] [ERROR] -------------------------------------------------
+[2026-01-26T12:53:04.512Z] [ERROR] EMAIL_PASS=your-app-password
+[2026-01-26T12:53:04.513Z] [ERROR] -------------------------------------------------
+
+[2026-01-26T12:59:49.943Z] [ERROR] 
+⚠️ WARNING: Email credentials are not configured.
+[2026-01-26T12:59:49.945Z] [ERROR] Please add EMAIL_USER and EMAIL_PASS to your .env file.
+[2026-01-26T12:59:49.947Z] [ERROR] EMAIL_USER=your-email@gmail.com
+[2026-01-26T12:59:49.949Z] [ERROR] EMAIL_PASS=your-app-password
+[2026-01-26T12:59:49.946Z] [ERROR] -------------------------------------------------
+[2026-01-26T12:59:49.950Z] [ERROR] -------------------------------------------------
+
+[2026-01-26T13:16:21.946Z] [ERROR] 
+⚠️ WARNING: Email credentials are not configured.
+[2026-01-26T13:16:22.237Z] [ERROR] Please add EMAIL_USER and EMAIL_PASS to your .env file.
+[2026-01-26T13:16:22.328Z] [ERROR] -------------------------------------------------
+[2026-01-26T13:16:22.427Z] [ERROR] EMAIL_USER=your-email@gmail.com
+[2026-01-26T13:16:22.488Z] [ERROR] EMAIL_PASS=your-app-password
+[2026-01-26T13:16:22.528Z] [ERROR] -------------------------------------------------
+

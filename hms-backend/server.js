@@ -2,10 +2,10 @@
 const express = require('express');
 const fs = require('fs');
 const util = require('util');
-require('dotenv').config(); // Load environment variables from .env file
+const path = require('path');
+require('dotenv').config({ path: path.join(__dirname, '.env') }); // Load environment variables from .env file
 const oracledb = require('oracledb');
 const cors = require('cors');
-const path = require('path');
 const nodemailer = require('nodemailer');
 
 // Configure OracleDB to fetch CLOBs as strings to avoid circular JSON errors
@@ -228,6 +228,29 @@ async function startServer() {
         'Admin Operations API': { enabled: true, paths: ['/api/admin'] }
     };
 
+    // Helper to generate unique hotel slug
+    async function generateUniqueSlug(hotelName, connection, excludeUserId = null) {
+        let baseSlug = hotelName.toLowerCase().replace(/[^a-z0-9]/g, '');
+        let slug = baseSlug + '.com';
+        let counter = 1;
+        
+        while (true) {
+            let sql = `SELECT count(*) FROM hms_users WHERE hotel_slug = :slug`;
+            const binds = { slug };
+            
+            if (excludeUserId) {
+                sql += ` AND user_id != :excludeUserId`;
+                binds.excludeUserId = excludeUserId;
+            }
+
+            const result = await connection.execute(sql, binds); // Default array output
+            if (result.rows[0][0] === 0) return slug;
+            
+            slug = `${baseSlug}${counter}.com`;
+            counter++;
+        }
+    }
+
     // Helper function to initialize or re-initialize the database pool
     const initDb = async () => {
         try {
@@ -270,6 +293,8 @@ async function startServer() {
             try { await connection.execute("ALTER TABLE hms_online_bookings ADD hotel_name VARCHAR2(100)"); console.log("✅ Schema updated: Added hotel_name to hms_online_bookings"); } catch (e) { /* Ignore if exists */ }
             try { await connection.execute("ALTER TABLE hms_online_bookings ADD mobile_number VARCHAR2(20)"); console.log("✅ Schema updated: Added mobile_number to hms_online_bookings"); } catch (e) { }
             try { await connection.execute("ALTER TABLE hms_online_bookings ADD country_code VARCHAR2(10)"); console.log("✅ Schema updated: Added country_code to hms_online_bookings"); } catch (e) { }
+            try { await connection.execute("ALTER TABLE hms_online_bookings ADD check_in_time TIMESTAMP"); console.log("✅ Schema updated: Added check_in_time to hms_online_bookings"); } catch (e) { }
+            try { await connection.execute("ALTER TABLE hms_online_bookings ADD check_out_time TIMESTAMP"); console.log("✅ Schema updated: Added check_out_time to hms_online_bookings"); } catch (e) { }
 
             // Try adding hotel_name to hms_bill_history
             try { await connection.execute("ALTER TABLE hms_bill_history ADD hotel_name VARCHAR2(100)"); console.log("✅ Schema updated: Added hotel_name to hms_bill_history"); } catch (e) { /* Ignore if exists */ }
@@ -289,6 +314,31 @@ async function startServer() {
             try { await connection.execute("ALTER TABLE hms_users ADD profile_picture CLOB"); console.log("✅ Schema updated: Added profile_picture to hms_users"); } catch (e) {}
             try { await connection.execute("ALTER TABLE hms_users ADD read_notifications CLOB"); console.log("✅ Schema updated: Added read_notifications to hms_users"); } catch (e) {}
             try { await connection.execute("ALTER TABLE hms_users ADD address VARCHAR2(255)"); console.log("✅ Schema updated: Added address to hms_users"); } catch (e) {}
+            try { await connection.execute("ALTER TABLE hms_users ADD hotel_slug VARCHAR2(255)"); console.log("✅ Schema updated: Added hotel_slug to hms_users"); } catch (e) {}
+
+            // Backfill hotel_slug for existing owners
+            try {
+                const ownersWithoutSlug = await connection.execute(
+                    `SELECT user_id, hotel_name FROM hms_users WHERE role = 'Owner' AND hotel_slug IS NULL AND hotel_name IS NOT NULL`,
+                    [],
+                    { outFormat: oracledb.OUT_FORMAT_OBJECT }
+                );
+                
+                if (ownersWithoutSlug.rows.length > 0) {
+                    console.log(`Found ${ownersWithoutSlug.rows.length} owners without slugs. Generating...`);
+                    for (const owner of ownersWithoutSlug.rows) {
+                        const slug = owner.HOTEL_NAME.toLowerCase().replace(/[^a-z0-9]/g, '') + '.com';
+                        await connection.execute(
+                            `UPDATE hms_users SET hotel_slug = :slug WHERE user_id = :id`,
+                            { slug: slug, id: owner.USER_ID },
+                            { autoCommit: true }
+                        );
+                        console.log(`Generated slug '${slug}' for hotel '${owner.HOTEL_NAME}'`);
+                    }
+                }
+            } catch (e) {
+                console.error("Error backfilling hotel slugs:", e);
+            }
 
             // Try creating hms_broadcasts table
             try { 
@@ -359,6 +409,22 @@ async function startServer() {
             try { await connection.execute("ALTER TABLE hms_users ADD notification_volume NUMBER(3,2) DEFAULT 1.0"); console.log("✅ Schema updated: Added notification_volume"); } catch (e) {}
             try { await connection.execute("ALTER TABLE hms_users ADD notification_sound CLOB"); console.log("✅ Schema updated: Added notification_sound"); } catch (e) {}
             try { await connection.execute("ALTER TABLE hms_users ADD last_read_broadcast VARCHAR2(4000)"); console.log("✅ Schema updated: Added last_read_broadcast"); } catch (e) {}
+
+            // Try creating hotel_features table
+            try { 
+                await connection.execute(`
+                    CREATE TABLE hotel_features (
+                        id NUMBER GENERATED ALWAYS AS IDENTITY, 
+                        feature_text VARCHAR2(255), 
+                        hotel_name VARCHAR2(100)
+                    )
+                `); 
+                console.log("✅ Schema updated: Created hotel_features table"); 
+            } catch (e) { /* Ignore if exists */ }
+
+            // Add icon to hotel_features and scroll speed to users
+            try { await connection.execute("ALTER TABLE hotel_features ADD icon VARCHAR2(50) DEFAULT 'fa-star'"); console.log("✅ Schema updated: Added icon to hotel_features"); } catch (e) {}
+            try { await connection.execute("ALTER TABLE hms_users ADD feature_scroll_speed NUMBER DEFAULT 20"); console.log("✅ Schema updated: Added feature_scroll_speed to hms_users"); } catch (e) {}
 
         } catch (err) {
             console.error("Schema Migration Warning:", err.message);
@@ -465,18 +531,60 @@ async function startServer() {
             }
         });
 
+        // --- Calendar Availability Endpoint ---
+        app.get('/api/hotels/calendar-availability', async (req, res) => {
+            const { hotelName, roomType, month, year } = req.query;
+            if (!hotelName || !roomType || !month || !year) return res.json([]);
+
+            let connection;
+            try {
+                connection = await pool.getConnection();
+                
+                // 1. Get Total Rooms of Type
+                const totalRes = await connection.execute(
+                    `SELECT count(*) as count FROM hms_rooms WHERE hotel_name = :hotelName AND room_type = :roomType`,
+                    { hotelName, roomType }, { outFormat: oracledb.OUT_FORMAT_OBJECT }
+                );
+                const totalRooms = totalRes.rows[0].COUNT;
+
+                // 2. Get Bookings for the Month
+                // Simple logic: Get all bookings that overlap with this month
+                const startOfMonth = new Date(year, month - 1, 1);
+                const endOfMonth = new Date(year, month, 0, 23, 59, 59);
+
+                const bookingsRes = await connection.execute(
+                    `SELECT check_in_time, check_out_time FROM hms_online_bookings 
+                     WHERE hotel_name = :hotelName AND room_type = :roomType 
+                     AND booking_status IN ('Booked', 'Confirmed', 'Pending Payment')
+                     AND (check_in_time <= :endOfMonth AND check_out_time >= :startOfMonth)`,
+                    { hotelName, roomType, startOfMonth, endOfMonth },
+                    { outFormat: oracledb.OUT_FORMAT_OBJECT }
+                );
+
+                res.json({ totalRooms, bookings: bookingsRes.rows });
+            } catch (err) {
+                console.error("Calendar Availability Error:", err);
+                res.status(500).json({ message: 'Failed to fetch calendar data.' });
+            } finally {
+                if (connection) await connection.close();
+            }
+        });
+
         app.post('/api/online-bookings', async (req, res) => {
-            const { guestName, email, roomType, hotelName } = req.body;
-            if (!guestName || !email || !roomType || !hotelName) {
-                return res.status(400).json({ message: 'Please complete all booking details (Name, Email, Room Type, Hotel).' });
+            const { guestName, email, roomType, hotelName, checkIn, duration } = req.body;
+            if (!guestName || !email || !roomType || !hotelName || !checkIn || !duration) {
+                return res.status(400).json({ message: 'Please complete all booking details (Name, Email, Room Type, Date, Duration).' });
             }
 
             const checkinOtp = Math.floor(100000 + Math.random() * 900000).toString();
             // Log the check-in OTP for simulation purposes
             console.log(`\n--- 🔑 Check-in OTP for booking by ${guestName} (${email}) is: ${checkinOtp} ---\n`);
 
-            const sql = `INSERT INTO hms_online_bookings (guest_name, email, room_type, otp, hotel_name, mobile_number, country_code) 
-                         VALUES (:guestName, :email, :roomType, :otp, :hotelName, '0000000000', '+00')
+            const checkInDate = new Date(checkIn);
+            const checkOutDate = new Date(checkInDate.getTime() + (duration * 60 * 60 * 1000));
+
+            const sql = `INSERT INTO hms_online_bookings (guest_name, email, room_type, otp, hotel_name, mobile_number, country_code, check_in_time, check_out_time, booking_status) 
+                         VALUES (:guestName, :email, :roomType, :otp, :hotelName, '0000000000', '+00', :checkInDate, :checkOutDate, 'Booked')
                          RETURNING booking_id INTO :bookingId`;
             
             const bind = {
@@ -485,16 +593,44 @@ async function startServer() {
                 roomType,
                 otp: checkinOtp,
                 hotelName,
+                checkInDate,
+                checkOutDate,
                 bookingId: { type: oracledb.NUMBER, dir: oracledb.BIND_OUT }
             };
 
             let connection;
             try {
                 connection = await pool.getConnection();
+
+                // --- AVAILABILITY CHECK ---
+                // 1. Count Total Rooms
+                const totalRoomsRes = await connection.execute(`SELECT count(*) as count FROM hms_rooms WHERE hotel_name = :hotelName AND room_type = :roomType`, { hotelName, roomType }, { outFormat: oracledb.OUT_FORMAT_OBJECT });
+                const totalRooms = totalRoomsRes.rows[0].COUNT;
+
+                // 2. Count Active Guests (Occupied Now)
+                const activeGuestsRes = await connection.execute(`SELECT count(*) as count FROM hms_guests g JOIN hms_rooms r ON g.room_number = r.room_number WHERE g.hotel_name = :hotelName AND r.room_type = :roomType`, { hotelName, roomType }, { outFormat: oracledb.OUT_FORMAT_OBJECT });
+                const activeGuests = activeGuestsRes.rows[0].COUNT;
+
+                // 3. Count Future Confirmed Bookings overlapping with requested time
+                const futureBookingsRes = await connection.execute(`SELECT count(*) as count FROM hms_online_bookings WHERE hotel_name = :hotelName AND room_type = :roomType AND booking_status = 'Confirmed' AND (check_in_time < :checkOutDate AND check_out_time > :checkInDate)`, { hotelName, roomType, checkOutDate, checkInDate }, { outFormat: oracledb.OUT_FORMAT_OBJECT });
+                const futureBookings = futureBookingsRes.rows[0].COUNT;
+
+                if ((totalRooms - activeGuests - futureBookings) <= 0) {
+                    return res.status(409).json({ message: 'Please select a different room or duration as the room is not available during the time period selected.' });
+                }
+
                 const result = await connection.execute(sql, bind, { autoCommit: true });
                 const bookingId = result.outBinds.bookingId[0];
+
+                // --- Send Confirmation Email Immediately ---
+                if (email) {
+                    const emailMsg = `Dear ${guestName},\n\nYour booking request for a ${roomType} at ${hotelName} has been received.\n\nCheck-in: ${checkInDate.toLocaleString()}\nDuration: ${duration} hours\n\nWe will review your request and send a verification code shortly.`;
+                    const html = createEmailTemplate('Booking Received', `<p>Dear ${guestName},</p><p>Your booking request for a <strong>${roomType}</strong> at <strong>${hotelName}</strong> has been received.</p><p><strong>Check-in:</strong> ${checkInDate.toLocaleString()}<br><strong>Duration:</strong> ${duration} hours</p><p>We will review your request and send a verification code shortly.</p>`);
+                    sendEmail(email, `Booking Received - ${hotelName}`, emailMsg, html).catch(console.error);
+                }
+
                 res.status(201).json({ 
-                    message: 'Room booked successfully!', 
+                    message: 'Room confirmed successfully!', 
                     bookingId: bookingId 
                 });
             } catch (err) {
@@ -510,10 +646,10 @@ async function startServer() {
             if (!hotelName || hotelName === 'null' || hotelName === 'undefined') {
                 return res.json([]);
             }
-            const sql = `SELECT booking_id, guest_name, email, room_type 
+            const sql = `SELECT booking_id, guest_name, email, room_type, booking_status, check_in_time, check_out_time 
                          FROM hms_online_bookings 
-                         WHERE hotel_name = :hotelName AND booking_status = 'Booked' 
-                         ORDER BY booking_time ASC`;
+                         WHERE hotel_name = :hotelName AND booking_status IN ('Booked', 'Confirmed', 'Pending Payment') 
+                         ORDER BY booking_id ASC`;
             let connection;
             try {
                 connection = await pool.getConnection();
@@ -580,7 +716,7 @@ async function startServer() {
                 // 1. Verify OTP
                 const bookingResult = await connection.execute( // This query doesn't need country_code, it's just for verification
                     `SELECT guest_name, email, room_type, otp FROM hms_online_bookings 
-                     WHERE booking_id = :bookingId AND hotel_name = :hotelName AND booking_status = 'Booked'`,
+                     WHERE booking_id = :bookingId AND hotel_name = :hotelName AND booking_status IN ('Booked', 'Confirmed')`,
                     { bookingId, hotelName },
                     { outFormat: oracledb.OUT_FORMAT_OBJECT }
                 );
@@ -635,7 +771,7 @@ async function startServer() {
                 
                 // 4. Update the online booking status to 'Confirmed'
                 await connection.execute(
-                    `UPDATE hms_online_bookings SET booking_status = 'Confirmed' WHERE booking_id = :bookingId`,
+                    `UPDATE hms_online_bookings SET booking_status = 'CheckedIn' WHERE booking_id = :bookingId`,
                     { bookingId }
                 );
 
@@ -660,7 +796,7 @@ async function startServer() {
         });
 
         app.post('/api/online-bookings/decline', async (req, res) => {
-            const { bookingId, hotelName } = req.body;
+            const { bookingId, hotelName, reason } = req.body;
             let connection;
             try {
                 connection = await pool.getConnection();
@@ -668,7 +804,7 @@ async function startServer() {
                 // 1. Get guest's mobile number for notification
                 const bookingResult = await connection.execute(
                     `SELECT email FROM hms_online_bookings 
-                     WHERE booking_id = :bookingId AND hotel_name = :hotelName AND booking_status = 'Booked'`,
+                     WHERE booking_id = :bookingId AND hotel_name = :hotelName AND booking_status IN ('Booked', 'Confirmed')`,
                     { bookingId, hotelName },
                     { outFormat: oracledb.OUT_FORMAT_OBJECT }
                 );
@@ -686,7 +822,7 @@ async function startServer() {
                 );
 
                 // 3. Send a notification to the guest (simulated via console log)
-                const declineMessage = `We regret to inform you that your booking (ID: ${bookingId}) with ${hotelName} has been declined as all rooms are currently full.`;
+                const declineMessage = `We regret to inform you that your booking (ID: ${bookingId}) with ${hotelName} has been declined.${reason ? '<br><br><strong>Reason:</strong> ' + reason : ''}`;
                 
                 // Send Email Notification
                 const guestEmailResult = await connection.execute(`SELECT email FROM hms_online_bookings WHERE booking_id = :bookingId`, {bookingId}, { outFormat: oracledb.OUT_FORMAT_OBJECT });
@@ -699,6 +835,25 @@ async function startServer() {
             } catch (err) {
                 console.error("Decline Booking Error:", err);
                 res.status(500).json({ message: 'Failed to decline booking.' });
+            } finally {
+                if (connection) await connection.close();
+            }
+        });
+
+        // --- Mark Booking as Pending Payment ---
+        app.post('/api/online-bookings/mark-pending', async (req, res) => {
+            const { bookingId, hotelName } = req.body;
+            let connection;
+            try {
+                connection = await pool.getConnection();
+                await connection.execute(
+                    `UPDATE hms_online_bookings SET booking_status = 'Pending Payment' WHERE booking_id = :bookingId AND hotel_name = :hotelName`,
+                    { bookingId, hotelName }, { autoCommit: true }
+                );
+                res.json({ message: 'Booking marked as Pending Payment.' });
+            } catch (err) {
+                console.error("Mark Pending Error:", err);
+                res.status(500).json({ message: 'Failed to update status.' });
             } finally {
                 if (connection) await connection.close();
             }
@@ -832,12 +987,19 @@ async function startServer() {
             const mobileSuffix = finalMobile !== '0000000000' ? finalMobile.slice(-4) : Math.floor(1000 + Math.random() * 9000);
             const username = `${cleanName}${mobileSuffix}`;
             const tempPassword = Math.random().toString(36).slice(-8); // 8 char random string
-            
-            const sql = `INSERT INTO hms_users (full_name, username, password, email, mobile_number, role, address, hotel_name, perm_manage_rooms, perm_add_guests, perm_edit_guests) 
-                         VALUES (:fullName, :username, :password, :email, :mobile, :role, :address, :hotelName, 0, 0, 0)`;
+
+            const sql = `INSERT INTO hms_users (full_name, username, password, email, mobile_number, role, address, hotel_name, perm_manage_rooms, perm_add_guests, perm_edit_guests, hotel_slug) 
+                         VALUES (:fullName, :username, :password, :email, :mobile, :role, :address, :hotelName, 0, 0, 0, :hotelSlug)`;
             let connection;
             try {
                 connection = await pool.getConnection();
+                
+                // Generate unique slug for Owners
+                let hotelSlug = null;
+                if (role === 'Owner' && hotelName) {
+                    hotelSlug = await generateUniqueSlug(hotelName, connection);
+                }
+
                 await connection.execute(sql, {
                     fullName,
                     username,
@@ -846,7 +1008,8 @@ async function startServer() {
                     mobile: finalMobile,
                     role,
                     address: address || '',
-                    hotelName
+                    hotelName,
+                    hotelSlug
                 }, { autoCommit: true });
 
                 if (email && role !== 'Room') {
@@ -1066,7 +1229,7 @@ async function startServer() {
 
         // Get All Owners
         app.get('/api/admin/owners', async (req, res) => {
-            const sql = `SELECT user_id, full_name, email, mobile_number, hotel_name, address FROM hms_users WHERE role = 'Owner' ORDER BY hotel_name`;
+            const sql = `SELECT user_id, full_name, email, mobile_number, hotel_name, address, hotel_slug FROM hms_users WHERE role = 'Owner' ORDER BY hotel_name`;
             let connection;
             try {
                 connection = await pool.getConnection();
@@ -1075,6 +1238,32 @@ async function startServer() {
             } catch (err) {
                 console.error("Get Owners Error:", err);
                 res.status(500).json({ message: 'Failed to fetch owners.' });
+            } finally {
+                if (connection) await connection.close();
+            }
+        });
+
+        // Regenerate Hotel Slug
+        app.post('/api/admin/regenerate-slug', async (req, res) => {
+            const { userId } = req.body;
+            let connection;
+            try {
+                connection = await pool.getConnection();
+                const userResult = await connection.execute(
+                    `SELECT hotel_name FROM hms_users WHERE user_id = :userId`, 
+                    { userId }, 
+                    { outFormat: oracledb.OUT_FORMAT_OBJECT }
+                );
+                
+                if (userResult.rows.length === 0) return res.status(404).json({ message: 'User not found' });
+                
+                const newSlug = await generateUniqueSlug(userResult.rows[0].HOTEL_NAME, connection, userId);
+                await connection.execute(`UPDATE hms_users SET hotel_slug = :newSlug WHERE user_id = :userId`, { newSlug, userId }, { autoCommit: true });
+                
+                res.json({ message: 'Slug regenerated successfully.', newSlug });
+            } catch (err) {
+                console.error("Regenerate Slug Error:", err);
+                res.status(500).json({ message: 'Failed to regenerate slug.' });
             } finally {
                 if (connection) await connection.close();
             }
@@ -1387,6 +1576,33 @@ async function startServer() {
             }
         });
 
+        // --- Resolve Hotel Slug ---
+        app.get('/api/resolve-slug/:slug', async (req, res) => {
+            const { slug } = req.params;
+            let connection;
+            try {
+                connection = await pool.getConnection();
+                const result = await connection.execute(
+                    `SELECT hotel_name, profile_picture FROM hms_users WHERE hotel_slug = :slug AND role = 'Owner'`,
+                    { slug },
+                    { 
+                        outFormat: oracledb.OUT_FORMAT_OBJECT,
+                        fetchInfo: { PROFILE_PICTURE: { type: oracledb.STRING } }
+                    }
+                );
+                if (result.rows.length > 0) {
+                    res.json({ hotelName: result.rows[0].HOTEL_NAME, logo: result.rows[0].PROFILE_PICTURE });
+                } else {
+                    res.status(404).json({ message: 'Hotel not found' });
+                }
+            } catch (err) {
+                console.error("Resolve Slug Error:", err);
+                res.status(500).json({ message: 'Server error' });
+            } finally {
+                if (connection) await connection.close();
+            }
+        });
+
         app.get('/api/users', async (req, res) => {
             const { hotelName } = req.query;
             if (!hotelName || hotelName === 'null' || hotelName === 'undefined') {
@@ -1478,7 +1694,7 @@ async function startServer() {
         // Update User Details (Profile Picture, Personal Info)
         app.put('/api/users/:user_id', async (req, res) => {
             const { user_id } = req.params;
-            const { fullName, email, mobile, address, role, profilePicture, isDarkMode, notificationVolume, notificationSound, lastReadBroadcast, readNotifications } = req.body;
+            const { fullName, email, mobile, address, role, profilePicture, isDarkMode, notificationVolume, notificationSound, lastReadBroadcast, readNotifications, featureScrollSpeed } = req.body;
             
             // Build dynamic query based on provided fields
             let updates = [];
@@ -1495,6 +1711,7 @@ async function startServer() {
             if (notificationSound !== undefined) { updates.push("notification_sound = :notificationSound"); binds.notificationSound = notificationSound; }
             if (lastReadBroadcast !== undefined) { updates.push("last_read_broadcast = :lastReadBroadcast"); binds.lastReadBroadcast = lastReadBroadcast; }
             if (readNotifications !== undefined) { updates.push("read_notifications = :readNotifications"); binds.readNotifications = readNotifications; }
+            if (featureScrollSpeed !== undefined) { updates.push("feature_scroll_speed = :featureScrollSpeed"); binds.featureScrollSpeed = featureScrollSpeed; }
 
             if (updates.length === 0) return res.status(400).json({ message: "No fields to update." });
 
@@ -2368,6 +2585,99 @@ async function startServer() {
             }
         });
 
+        // --- Hotel Features Routes ---
+        app.get('/api/hotel-features', async (req, res) => {
+            const { hotelName } = req.query;
+            let connection;
+            try {
+                connection = await pool.getConnection();
+                const result = await connection.execute(
+                    `SELECT * FROM hotel_features WHERE hotel_name = :hotelName ORDER BY id DESC`,
+                    { hotelName: hotelName || '' },
+                    { outFormat: oracledb.OUT_FORMAT_OBJECT }
+                );
+                res.json(result.rows);
+            } catch (err) {
+                console.error("Get Features Error:", err);
+                res.status(500).json({ message: 'Failed to fetch features.' });
+            } finally {
+                if (connection) await connection.close();
+            }
+        });
+
+        app.post('/api/hotel-features', async (req, res) => {
+            const { featureText, icon, hotelName } = req.body;
+            let connection;
+            try {
+                connection = await pool.getConnection();
+                await connection.execute(
+                    `INSERT INTO hotel_features (feature_text, icon, hotel_name) VALUES (:featureText, :icon, :hotelName)`,
+                    { featureText, icon: icon || 'fa-star', hotelName },
+                    { autoCommit: true }
+                );
+                res.status(201).json({ message: 'Feature added.' });
+            } catch (err) {
+                console.error("Add Feature Error:", err);
+                res.status(500).json({ message: 'Failed to add feature.' });
+            } finally {
+                if (connection) await connection.close();
+            }
+        });
+
+        app.delete('/api/hotel-features/:id', async (req, res) => {
+            const { id } = req.params;
+            let connection;
+            try {
+                connection = await pool.getConnection();
+                await connection.execute(`DELETE FROM hotel_features WHERE id = :id`, { id }, { autoCommit: true });
+                res.json({ message: 'Feature deleted.' });
+            } catch (err) {
+                console.error("Delete Feature Error:", err);
+                res.status(500).json({ message: 'Failed to delete feature.' });
+            } finally {
+                if (connection) await connection.close();
+            }
+        });
+
+        // Get Hotel Public Settings (Scroll Speed)
+        app.get('/api/hotel/settings', async (req, res) => {
+            const { hotelName } = req.query;
+            let connection;
+            try {
+                connection = await pool.getConnection();
+                const result = await connection.execute(
+                    `SELECT feature_scroll_speed FROM hms_users WHERE hotel_name = :hotelName AND role = 'Owner' FETCH FIRST 1 ROWS ONLY`,
+                    { hotelName },
+                    { outFormat: oracledb.OUT_FORMAT_OBJECT }
+                );
+                res.json(result.rows.length > 0 ? result.rows[0] : { FEATURE_SCROLL_SPEED: 20 });
+            } catch (err) {
+                res.status(500).json({ message: 'Error fetching settings' });
+            } finally {
+                if (connection) await connection.close();
+            }
+        });
+
+        // Get Hotel Contact Details (Public)
+        app.get('/api/hotel/contact', async (req, res) => {
+            const { hotelName } = req.query;
+            const sql = `SELECT full_name, email, mobile_number, address FROM hms_users WHERE hotel_name = :hotelName AND role = 'Owner' FETCH FIRST 1 ROWS ONLY`;
+            let connection;
+            try {
+                connection = await pool.getConnection();
+                const result = await connection.execute(sql, { hotelName }, { outFormat: oracledb.OUT_FORMAT_OBJECT });
+                if (result.rows.length > 0) {
+                    res.json(result.rows[0]);
+                } else {
+                    res.status(404).json({ message: 'Contact details not found.' });
+                }
+            } catch (err) {
+                res.status(500).json({ message: 'Error fetching contact details.' });
+            } finally {
+                if (connection) await connection.close();
+            }
+        });
+
         // --- System Control Routes ---
         app.get('/api/admin/control/status', (req, res) => {
             res.json({ api: apiEnabled, db: !!pool });
@@ -2556,6 +2866,16 @@ async function startServer() {
             } finally {
                 if (connection) await connection.close();
             }
+        });
+
+        // --- Catch-all for Hotel Slugs ---
+        // This must be after all API routes but before the server listen
+        app.get('/:slug', (req, res, next) => {
+            // If it looks like a file extension (e.g. .js, .css) and isn't our custom .com slug, skip
+            if (req.params.slug.includes('.') && !req.params.slug.endsWith('.com')) return next();
+            
+            // Serve the main index.html for the frontend to handle the routing
+            res.sendFile(path.join(__dirname, '../index.html'));
         });
 
         // --- Start the Express Server ---

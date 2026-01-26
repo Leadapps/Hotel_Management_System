@@ -679,5 +679,126 @@ input:checked + .slider:before {
   background-color: rgba(0, 0, 0, 0.8);
 }
 
+/* BACKGROUND SLIDESHOW & MODAL EFFECT */
+#bg-slideshow-container {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  z-index: 0;
+  background: #000;
+}
+
+.bg-slide {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  opacity: 0;
+  transition: opacity 1.5s ease-in-out, transform 6s linear;
+  transform: scale(1);
+}
+
+.bg-slide.active {
+  opacity: 0.7; /* Slightly dimmed to make text readable */
+  transform: scale(1.1);
+}
+
+/* When slideshow is active, make wrapper transparent and card pop */
+body.has-bg-slideshow .auth-wrapper {
+  background: rgba(0, 0, 0, 0.5); /* Dark overlay */
+  position: relative;
+  z-index: 1;
+}
+
+body.has-bg-slideshow .auth-card {
+  box-shadow: 0 15px 50px rgba(0,0,0,0.7);
+  animation: modalPop 0.5s ease-out;
+}
+
+@keyframes modalPop {
+  0% { transform: scale(0.95); opacity: 0.8; }
+  100% { transform: scale(1); opacity: 1; }
+}
+
+/* SCROLLING FEATURES SIDEBARS */
+.feature-scroll-container {
+  position: fixed;
+  top: 0;
+  bottom: 0;
+  width: 200px;
+  z-index: 2; /* Above background, below modal (modal usually higher) */
+  overflow: hidden;
+  pointer-events: none; /* Let clicks pass through */
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.feature-scroll-container.left {
+  left: 20px;
+}
+
+.feature-scroll-container.right {
+  right: 20px;
+}
+
+.feature-scroll-content {
+  animation: scrollUp 20s linear infinite; /* Default, overridden by JS */
+  text-align: center;
+}
+
+.feature-item {
+  color: rgba(255, 255, 255, 0.9);
+  font-size: 18px;
+  font-weight: bold;
+  margin-bottom: 40px;
+  text-shadow: 0 2px 4px rgba(0,0,0,0.8);
+  background: rgba(0,0,0,0.3);
+  padding: 10px;
+  border-radius: 8px;
+}
+
+@keyframes scrollUp {
+  0% { transform: translateY(100vh); } /* Start below the screen */
+  100% { transform: translateY(-100%); } /* Move completely out of view */
+}
+
+/* REMEMBER ME CHECKBOX */
+.remember-me-container {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 10px 0;
+  text-align: left;
+}
+
+.remember-me-container input {
+  width: auto;
+  margin: 0;
+  cursor: pointer;
+}
+
+.remember-me-container label {
+  font-size: 14px;
+  color: #555;
+  cursor: pointer;
+}
+
+/* CONTACT BUTTON */
+.contact-hotel-btn {
+  background-color: #17a2b8 !important;
+  margin-top: 15px;
+  width: 100%;
+  justify-content: center;
+}
+
+.contact-hotel-btn:hover {
+  background-color: #138496 !important;
+}
+
 .prev-btn { left: 0; border-radius: 0 5px 5px 0; }
 .next-btn { right: 0; border-radius: 5px 0 0 5px; }

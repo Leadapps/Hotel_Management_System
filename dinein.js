@@ -19,6 +19,7 @@ document.addEventListener('DOMContentLoaded', () => {
     // Focus on input
     const input = document.getElementById('guestIdentifierInput');
     if(input) input.focus();
+    injectContactButton();
 });
 
 // --- STYLES ---
@@ -212,3 +213,47 @@ function showNotification(title, msg) {
     document.getElementById('modalMsg').textContent = msg;
     document.getElementById('notificationModal').style.display = 'flex';
 }
+
+function injectContactButton() {
+    const authBox = document.getElementById('guestAuthBox');
+    if (authBox && !document.getElementById('contactBtn')) {
+        const btn = document.createElement('button');
+        btn.id = 'contactBtn';
+        btn.className = 'contact-hotel-btn main-btn';
+        btn.innerHTML = '<i class="fa-solid fa-headset"></i> Contact Us';
+        btn.style.marginTop = '15px';
+        btn.style.width = '100%';
+        btn.onclick = openContactModal;
+        authBox.appendChild(btn);
+
+        if (!document.getElementById('contactModal')) {
+            const modal = document.createElement('div');
+            modal.id = 'contactModal';
+            modal.className = 'modal';
+            modal.style.display = 'none';
+            modal.innerHTML = `
+                <div class="modal-overlay" onclick="closeContactModal()"></div>
+                <div class="modal-box">
+                    <h3><i class="fa-solid fa-hotel"></i> ${currentUser ? currentUser.hotelName : 'Hotel'}</h3>
+                    <p style="color:#666; margin-bottom:20px;">Need assistance? Contact the front desk.</p>
+                    <div style="background:#f8f9fa; padding:15px; border-radius:8px; margin-bottom:20px;">
+                        <div style="font-size:18px; font-weight:bold; color:#007bff; margin-bottom:10px;">
+                            <i class="fa-solid fa-phone"></i> Intercom: 9
+                        </div>
+                    </div>
+                    <button class="cancel-btn" onclick="closeContactModal()" style="width:100%">Close</button>
+                </div>
+            `;
+            document.body.appendChild(modal);
+        }
+    }
+}
+
+window.openContactModal = function() { 
+    const modal = document.getElementById('contactModal');
+    if(modal) modal.style.display = 'flex'; 
+};
+window.closeContactModal = function() { 
+    const modal = document.getElementById('contactModal');
+    if(modal) modal.style.display = 'none'; 
+};
