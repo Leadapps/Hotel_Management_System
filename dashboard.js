@@ -1134,15 +1134,32 @@ async function renderOnlineBookings() {
         table.innerHTML = bookings.map(b => `
             <tr>
                 <td>${b.BOOKING_ID}</td>
-                <td>${b.GUEST_NAME}</td>
+                <td>
+                    ${b.GUEST_NAME}
+                    ${b.BOOKING_STATUS === 'Confirmed' ? '<br><span style="font-size:10px; background:#28a745; color:white; padding:2px 4px; border-radius:3px;">Auto-Confirmed</span>' : ''}
+                    ${b.BOOKING_STATUS === 'Pending Payment' ? '<br><span style="font-size:10px; background:#ffc107; color:black; padding:2px 4px; border-radius:3px;">Pending Payment</span>' : ''}
+                </td>
                 <td>${b.ROOM_TYPE}</td>
                 <td class="actions-cell">
-                    <button class="confirm-btn" onclick="acceptBooking(${b.BOOKING_ID})">
-                        <i class="fa-solid fa-check"></i> Accept
-                    </button>
-                    <button class="delete-btn" onclick="declineBooking(${b.BOOKING_ID})">
-                        <i class="fa-solid fa-times"></i> Decline
-                    </button>
+                    ${b.BOOKING_STATUS === 'Booked' || b.BOOKING_STATUS === 'Pending Payment' ? `
+                        <button class="confirm-btn" onclick="acceptBooking(${b.BOOKING_ID})">
+                            <i class="fa-solid fa-check"></i> Accept
+                        </button>
+                        ${b.BOOKING_STATUS !== 'Pending Payment' ? `
+                        <button class="main-btn" style="background-color:#ffc107; color:black;" onclick="markPendingPayment(${b.BOOKING_ID})">
+                            <i class="fa-solid fa-clock"></i> Pay
+                        </button>` : ''}
+                        <button class="delete-btn" onclick="declineBooking(${b.BOOKING_ID})">
+                            <i class="fa-solid fa-times"></i> Decline
+                        </button>
+                    ` : `
+                        <button class="confirm-btn" style="background-color:#17a2b8;" onclick="checkInConfirmedBooking(${b.BOOKING_ID})">
+                            <i class="fa-solid fa-door-open"></i> Check In
+                        </button>
+                        <button class="delete-btn" onclick="declineBooking(${b.BOOKING_ID})">
+                            <i class="fa-solid fa-ban"></i> Cancel
+                        </button>
+                    `}
                 </td>
             </tr>
         `).join('');
@@ -1206,6 +1223,39 @@ async function acceptBooking(bookingId) {
     });
 }
 
+function checkInConfirmedBooking(bookingId) {
+    // For auto-confirmed bookings, the guest already has the OTP (or we can bypass/resend).
+    // We open the modal directly to enter details.
+    const modal = document.getElementById('actionModal');
+    const modalBox = document.getElementById('modalBox');
+    modalBox.innerHTML = `
+        <h3 style="margin-top:0;">Check In Guest (Booking #${bookingId})</h3>
+        <p>Enter the guest's details and the OTP they received to complete check-in.</p>
+        <input type="text" id="guestCheckinOtp" placeholder="Guest OTP" style="width: 100%; padding: 8px; margin: 8px 0; box-sizing: border-box;" maxlength="6" autofocus>
+        <input type="text" id="onlineGuestMobile" placeholder="Mobile Number" style="width: 100%; padding: 8px; margin: 8px 0; box-sizing: border-box;">
+        <input type="text" id="onlineGuestAddress" placeholder="Address" style="width: 100%; padding: 8px; margin: 8px 0; box-sizing: border-box;">
+        <input type="number" id="onlineGuestAge" placeholder="Guest Age" style="width: 100%; padding: 8px; margin: 8px 0; box-sizing: border-box;">
+        <select id="onlineGuestGender" style="width: 100%; padding: 8px; margin: 8px 0; box-sizing: border-box;">
+            <option value="">Select Gender</option>
+            <option value="Male">Male</option>
+            <option value="Female">Female</option>
+            <option value="Other">Other</option>
+        </select>
+        <select id="onlineGuestVerificationType" style="width: 100%; padding: 8px; margin: 8px 0; box-sizing: border-box;">
+            <option value="Aadhaar Card">Aadhaar Card</option>
+            <option value="PAN Card">PAN Card</option>
+            <option value="Passport">Passport</option>
+            <option value="Other">Other</option>
+        </select>
+        <input type="text" id="onlineGuestVerificationId" placeholder="Verification ID Number" style="width: 100%; padding: 8px; margin: 8px 0; box-sizing: border-box;">
+        <div style="margin-top: 15px; display: flex; gap: 10px; justify-content: center;">
+            <button class="confirm-btn" onclick="confirmOnlineBooking(${bookingId})">Confirm Check-in</button>
+            <button class="cancel-btn" onclick="closeModal()">Cancel</button>
+        </div>
+    `;
+    modal.style.display = 'flex';
+}
+
 async function confirmOnlineBooking(bookingId) {
     const guestOtp = document.getElementById('guestCheckinOtp').value;
     const mobile = document.getElementById('onlineGuestMobile').value;
@@ -1252,29 +1302,63 @@ async function confirmOnlineBooking(bookingId) {
     }
 }
 
+async function markPendingPayment(bookingId) {
+    try {
+        showLoading("Updating status...");
+        const response = await fetch(`${API_BASE_URL}/online-bookings/mark-pending`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ bookingId, hotelName: getContextHotel() })
+        });
+        const result = await response.json();
+        closeModal();
+        if (response.ok) renderOnlineBookings();
+        else showModal(result.message);
+    } catch (e) { closeModal(); showModal("Failed to update status."); }
+}
+
 function declineBooking(bookingId) {
-    showModal(`Are you sure you want to decline booking #${bookingId}? This will notify the guest.`, async () => {
+    const modal = document.getElementById('actionModal');
+    const modalBox = document.getElementById('modalBox');
+    
+    modalBox.innerHTML = `
+        <h3 style="margin-top:0;">Decline Booking #${bookingId}</h3>
+        <p>Please provide a reason for declining this booking (optional):</p>
+        <textarea id="declineReason" rows="3" style="width: 100%; padding: 8px; margin: 8px 0; box-sizing: border-box; font-family: inherit;" placeholder="e.g., No rooms available, Invalid details..."></textarea>
+        <div style="margin-top: 15px; display: flex; gap: 10px; justify-content: center;">
+            <button class="delete-btn" id="confirmDeclineBtn">Decline Booking</button>
+            <button class="cancel-btn" onclick="closeModal()">Cancel</button>
+        </div>
+    `;
+    modal.style.display = 'flex';
+
+    document.getElementById('confirmDeclineBtn').onclick = async () => {
+        const reason = document.getElementById('declineReason').value.trim();
         try {
+            showLoading("Declining booking...");
             const response = await fetch(`${API_BASE_URL}/online-bookings/decline`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
                     bookingId,
-                    hotelName: getContextHotel()
+                    hotelName: getContextHotel(),
+                    reason
                 })
             });
 
             const result = await response.json();
+            closeModal();
             showModal(result.message || 'An error occurred.');
 
             if (response.ok) {
                 renderOnlineBookings(); // Refresh the list of pending bookings
             }
         } catch (error) {
+            closeModal();
             console.error('Error declining booking:', error);
             showModal('A network error occurred while declining the booking.');
         }
-    });
+    };
 }
 
 
@@ -3604,6 +3688,16 @@ document.addEventListener('DOMContentLoaded', async () => {
             divLF.className = 'tab-content';
             document.querySelector('.main-content').appendChild(divLF);
         }
+
+        // --- AUTO REFRESH BOOKINGS ---
+        // Poll every 10 seconds to update the booking list automatically
+        setInterval(() => {
+            // Only refresh if the booking table is visible or we are on the dashboard
+            if (document.getElementById('onlineBookingTable')) {
+                renderOnlineBookings();
+            }
+        }, 10000);
+
         loadPromises.push(refreshUserProfile());
         await Promise.all(loadPromises);
         applyUserSettings(); // Apply settings after profile refresh
