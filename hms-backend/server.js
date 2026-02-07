@@ -295,6 +295,7 @@ async function startServer() {
             try { await connection.execute("ALTER TABLE hms_online_bookings ADD country_code VARCHAR2(10)"); console.log("✅ Schema updated: Added country_code to hms_online_bookings"); } catch (e) { }
             try { await connection.execute("ALTER TABLE hms_online_bookings ADD check_in_time TIMESTAMP"); console.log("✅ Schema updated: Added check_in_time to hms_online_bookings"); } catch (e) { }
             try { await connection.execute("ALTER TABLE hms_online_bookings ADD check_out_time TIMESTAMP"); console.log("✅ Schema updated: Added check_out_time to hms_online_bookings"); } catch (e) { }
+            try { await connection.execute("ALTER TABLE hms_online_bookings ADD updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP"); console.log("✅ Schema updated: Added updated_at to hms_online_bookings"); } catch (e) { }
 
             // Try adding hotel_name to hms_bill_history
             try { await connection.execute("ALTER TABLE hms_bill_history ADD hotel_name VARCHAR2(100)"); console.log("✅ Schema updated: Added hotel_name to hms_bill_history"); } catch (e) { /* Ignore if exists */ }
@@ -425,6 +426,40 @@ async function startServer() {
             // Add icon to hotel_features and scroll speed to users
             try { await connection.execute("ALTER TABLE hotel_features ADD icon VARCHAR2(50) DEFAULT 'fa-star'"); console.log("✅ Schema updated: Added icon to hotel_features"); } catch (e) {}
             try { await connection.execute("ALTER TABLE hms_users ADD feature_scroll_speed NUMBER DEFAULT 20"); console.log("✅ Schema updated: Added feature_scroll_speed to hms_users"); } catch (e) {}
+            try { await connection.execute("ALTER TABLE hms_users ADD upi_id VARCHAR2(100)"); console.log("✅ Schema updated: Added upi_id to hms_users"); } catch (e) {}
+            try { await connection.execute("ALTER TABLE hms_bill_history ADD payment_mode VARCHAR2(50)"); console.log("✅ Schema updated: Added payment_mode to hms_bill_history"); } catch (e) {}
+            try { await connection.execute("ALTER TABLE hms_users ADD theme_color VARCHAR2(20)"); console.log("✅ Schema updated: Added theme_color to hms_users"); } catch (e) {}
+            
+            // Try creating hms_employee_details table
+            try { 
+                await connection.execute(`
+                    CREATE TABLE hms_employee_details (
+                        user_id NUMBER, salary NUMBER, bank_account VARCHAR2(50), ifsc VARCHAR2(20), reports_to NUMBER,
+                        CONSTRAINT fk_emp_det_user FOREIGN KEY (user_id) REFERENCES hms_users(user_id) ON DELETE CASCADE
+                    )
+                `); 
+                console.log("✅ Schema updated: Created hms_employee_details table"); 
+            } catch (e) { /* Ignore if exists */ }
+
+            // Try creating hms_ui_settings table
+            try { 
+                await connection.execute(`
+                    CREATE TABLE hms_ui_settings (
+                        id NUMBER GENERATED ALWAYS AS IDENTITY, 
+                        hotel_name VARCHAR2(100),
+                        primary_color VARCHAR2(20),
+                        secondary_color VARCHAR2(20),
+                        sidebar_bg VARCHAR2(20),
+                        sidebar_text VARCHAR2(20),
+                        bg_color VARCHAR2(20),
+                        surface_color VARCHAR2(20),
+                        text_color VARCHAR2(20),
+                        guest_login_bg VARCHAR2(20),
+                        CONSTRAINT unique_hotel_ui UNIQUE (hotel_name)
+                    )
+                `); 
+                console.log("✅ Schema updated: Created hms_ui_settings table"); 
+            } catch (e) { /* Ignore if exists */ }
 
         } catch (err) {
             console.error("Schema Migration Warning:", err.message);
@@ -669,7 +704,7 @@ async function startServer() {
             try {
                 connection = await pool.getConnection();
                 const bookingResult = await connection.execute(
-                    `SELECT email FROM hms_online_bookings WHERE booking_id = :bookingId AND hotel_name = :hotelName AND booking_status = 'Booked'`,
+                    `SELECT email FROM hms_online_bookings WHERE booking_id = :bookingId AND hotel_name = :hotelName AND booking_status IN ('Booked', 'Pending Payment')`,
                     { bookingId, hotelName },
                     { outFormat: oracledb.OUT_FORMAT_OBJECT }
                 );
@@ -716,7 +751,7 @@ async function startServer() {
                 // 1. Verify OTP
                 const bookingResult = await connection.execute( // This query doesn't need country_code, it's just for verification
                     `SELECT guest_name, email, room_type, otp FROM hms_online_bookings 
-                     WHERE booking_id = :bookingId AND hotel_name = :hotelName AND booking_status IN ('Booked', 'Confirmed')`,
+                     WHERE booking_id = :bookingId AND hotel_name = :hotelName AND booking_status IN ('Booked', 'Confirmed', 'Pending Payment')`,
                     { bookingId, hotelName },
                     { outFormat: oracledb.OUT_FORMAT_OBJECT }
                 );
@@ -804,7 +839,7 @@ async function startServer() {
                 // 1. Get guest's mobile number for notification
                 const bookingResult = await connection.execute(
                     `SELECT email FROM hms_online_bookings 
-                     WHERE booking_id = :bookingId AND hotel_name = :hotelName AND booking_status IN ('Booked', 'Confirmed')`,
+                     WHERE booking_id = :bookingId AND hotel_name = :hotelName AND booking_status IN ('Booked', 'Confirmed', 'Pending Payment')`,
                     { bookingId, hotelName },
                     { outFormat: oracledb.OUT_FORMAT_OBJECT }
                 );
@@ -847,12 +882,31 @@ async function startServer() {
             try {
                 connection = await pool.getConnection();
                 await connection.execute(
-                    `UPDATE hms_online_bookings SET booking_status = 'Pending Payment' WHERE booking_id = :bookingId AND hotel_name = :hotelName`,
+                    `UPDATE hms_online_bookings SET booking_status = 'Pending Payment', updated_at = CURRENT_TIMESTAMP WHERE booking_id = :bookingId AND hotel_name = :hotelName`,
                     { bookingId, hotelName }, { autoCommit: true }
                 );
                 res.json({ message: 'Booking marked as Pending Payment.' });
             } catch (err) {
                 console.error("Mark Pending Error:", err);
+                res.status(500).json({ message: 'Failed to update status.' });
+            } finally {
+                if (connection) await connection.close();
+            }
+        });
+
+        // --- Mark Booking as Payment Received ---
+        app.post('/api/online-bookings/payment-received', async (req, res) => {
+            const { bookingId, hotelName } = req.body;
+            let connection;
+            try {
+                connection = await pool.getConnection();
+                await connection.execute(
+                    `UPDATE hms_online_bookings SET booking_status = 'Booked', updated_at = CURRENT_TIMESTAMP WHERE booking_id = :bookingId AND hotel_name = :hotelName`,
+                    { bookingId, hotelName }, { autoCommit: true }
+                );
+                res.json({ message: 'Payment recorded. Booking is now ready for acceptance.' });
+            } catch (err) {
+                console.error("Payment Received Error:", err);
                 res.status(500).json({ message: 'Failed to update status.' });
             } finally {
                 if (connection) await connection.close();
@@ -1186,6 +1240,37 @@ async function startServer() {
             }
         });
 
+        // Helper to get all registered routes from Express
+        function getRoutes(app) {
+            const routes = [];
+            if (app._router && app._router.stack) {
+                app._router.stack.forEach((middleware) => {
+                    if (middleware.route) { // routes registered directly on the app
+                        if (Array.isArray(middleware.route.path)) {
+                            middleware.route.path.forEach(p => {
+                                if (typeof p === 'string') routes.push(p);
+                            });
+                        } else if (typeof middleware.route.path === 'string') {
+                            routes.push(middleware.route.path);
+                        }
+                    } else if (middleware.name === 'router') { // router middleware 
+                        middleware.handle.stack.forEach((handler) => {
+                            if (handler.route) {
+                                if (Array.isArray(handler.route.path)) {
+                                    handler.route.path.forEach(p => {
+                                        if (typeof p === 'string') routes.push(p);
+                                    });
+                                } else if (typeof handler.route.path === 'string') {
+                                    routes.push(handler.route.path);
+                                }
+                            }
+                        });
+                    }
+                });
+            }
+            return [...new Set(routes)];
+        }
+
         // System Health Endpoint
         app.get('/api/admin/system-health', async (req, res) => {
             let dbStatus = 'Disconnected';
@@ -1209,6 +1294,26 @@ async function startServer() {
                 }
             }
 
+            // Dynamic API Discovery: Find routes not covered by existing groups
+            const allRoutes = getRoutes(app).filter(p => p.startsWith('/api/'));
+            const coveredRoutes = new Set();
+            Object.values(apiGroups).forEach(group => {
+                group.paths.forEach(prefix => {
+                    allRoutes.forEach(route => {
+                        if (route.startsWith(prefix)) coveredRoutes.add(route);
+                    });
+                });
+            });
+            const uncovered = allRoutes.filter(r => !coveredRoutes.has(r));
+            
+            // Dynamically add any new/uncovered APIs to the list so they are visible
+            uncovered.forEach(route => {
+                const name = `API: ${route}`;
+                if (!apiGroups[name]) {
+                    apiGroups[name] = { enabled: true, paths: [route] };
+                }
+            });
+
             // Define subsystems status based on DB connection
             const subsystems = [
                 { name: 'Authentication Module', status: dbStatus === 'Connected' ? 'Operational' : 'Degraded' },
@@ -1229,7 +1334,7 @@ async function startServer() {
 
         // Get All Owners
         app.get('/api/admin/owners', async (req, res) => {
-            const sql = `SELECT user_id, full_name, email, mobile_number, hotel_name, address, hotel_slug FROM hms_users WHERE role = 'Owner' ORDER BY hotel_name`;
+            const sql = `SELECT user_id, full_name, email, mobile_number, hotel_name, address, hotel_slug, upi_id FROM hms_users WHERE role = 'Owner' ORDER BY hotel_name`;
             let connection;
             try {
                 connection = await pool.getConnection();
@@ -1482,33 +1587,6 @@ async function startServer() {
         });
 
         // --- Global Search & Notifications ---
-        app.get('/api/admin/search', async (req, res) => {
-            const { q } = req.query;
-            if (!q) return res.json([]);
-            const search = `%${q.toLowerCase()}%`;
-            
-            let connection;
-            try {
-                connection = await pool.getConnection();
-                const sql = `
-                    SELECT 'Guest' as type, guest_name as name, hotel_name, room_number as info, mobile_number as contact, NULL as id
-                    FROM hms_guests 
-                    WHERE LOWER(guest_name) LIKE :search OR mobile_number LIKE :search OR LOWER(email) LIKE :search
-                    UNION ALL
-                    SELECT 'Booking' as type, guest_name as name, hotel_name, room_type as info, email as contact, booking_id as id
-                    FROM hms_online_bookings
-                    WHERE (LOWER(guest_name) LIKE :search OR LOWER(email) LIKE :search OR TO_CHAR(booking_id) LIKE :search)
-                    FETCH FIRST 20 ROWS ONLY
-                `;
-                const result = await connection.execute(sql, { search }, { outFormat: oracledb.OUT_FORMAT_OBJECT });
-                res.json(result.rows);
-            } catch (err) {
-                console.error("Global Search Error:", err);
-                res.status(500).json({ message: 'Search failed.' });
-            } finally {
-                if (connection) await connection.close();
-            }
-        });
 
         app.get('/api/notifications', async (req, res) => {
             const { role, hotelName } = req.query;
@@ -1625,8 +1703,12 @@ async function startServer() {
 
         app.get('/api/users/:username', async (req, res) => {
             const { username } = req.params;
-            const sql = `SELECT user_id, full_name, username, role, address, hotel_name, email, mobile_number, profile_picture, perm_manage_rooms, perm_add_guests, perm_edit_guests, is_dark_mode, notification_volume, notification_sound, last_read_broadcast, read_notifications 
-                         FROM hms_users WHERE username = :username`;
+            const sql = `SELECT u.user_id, u.full_name, u.username, u.role, u.address, u.hotel_name, u.email, u.mobile_number, u.profile_picture, u.perm_manage_rooms, u.perm_add_guests, u.perm_edit_guests, u.is_dark_mode, u.notification_volume, u.notification_sound, u.last_read_broadcast, u.read_notifications,
+                                m.full_name as reports_to_name
+                         FROM hms_users u
+                         LEFT JOIN hms_employee_details d ON u.user_id = d.user_id
+                         LEFT JOIN hms_users m ON d.reports_to = m.user_id
+                         WHERE u.username = :username`;
             let connection;
             try {
                 connection = await pool.getConnection();
@@ -1656,7 +1738,8 @@ async function startServer() {
                         notificationVolume: dbUser.NOTIFICATION_VOLUME !== null ? dbUser.NOTIFICATION_VOLUME : 1.0,
                         notificationSound: dbUser.NOTIFICATION_SOUND,
                         lastReadBroadcast: dbUser.LAST_READ_BROADCAST,
-                        readNotifications: dbUser.READ_NOTIFICATIONS
+                        readNotifications: dbUser.READ_NOTIFICATIONS,
+                        reportsToName: dbUser.REPORTS_TO_NAME
                     };
                     res.json(user);
                 } else {
@@ -1694,7 +1777,7 @@ async function startServer() {
         // Update User Details (Profile Picture, Personal Info)
         app.put('/api/users/:user_id', async (req, res) => {
             const { user_id } = req.params;
-            const { fullName, email, mobile, address, role, profilePicture, isDarkMode, notificationVolume, notificationSound, lastReadBroadcast, readNotifications, featureScrollSpeed } = req.body;
+            const { fullName, email, mobile, address, role, profilePicture, isDarkMode, notificationVolume, notificationSound, lastReadBroadcast, readNotifications, featureScrollSpeed, upiId, themeColor } = req.body;
             
             // Build dynamic query based on provided fields
             let updates = [];
@@ -1712,6 +1795,8 @@ async function startServer() {
             if (lastReadBroadcast !== undefined) { updates.push("last_read_broadcast = :lastReadBroadcast"); binds.lastReadBroadcast = lastReadBroadcast; }
             if (readNotifications !== undefined) { updates.push("read_notifications = :readNotifications"); binds.readNotifications = readNotifications; }
             if (featureScrollSpeed !== undefined) { updates.push("feature_scroll_speed = :featureScrollSpeed"); binds.featureScrollSpeed = featureScrollSpeed; }
+            if (upiId !== undefined) { updates.push("upi_id = :upiId"); binds.upiId = upiId; }
+            if (themeColor !== undefined) { updates.push("theme_color = :themeColor"); binds.themeColor = themeColor; }
 
             if (updates.length === 0) return res.status(400).json({ message: "No fields to update." });
 
@@ -2066,7 +2151,7 @@ async function startServer() {
         
         // --- Billing and History Routes ---
         app.post('/api/billing/checkout', async (req, res) => {
-            const { guestId, hotelName } = req.body;
+            const { guestId, hotelName, paymentMode } = req.body;
             let connection;
             try {
                 connection = await pool.getConnection();
@@ -2102,8 +2187,8 @@ async function startServer() {
                 const discountAmount = (grossAmount * room.DISCOUNT_PERCENT) / 100;
                 const finalAmount = grossAmount - discountAmount;
 
-                const historySql = `INSERT INTO hms_bill_history (guest_name, room_number, check_in_time, check_out_time, total_hours, gross_amount, discount_amount, final_amount, hotel_name) 
-                                    VALUES (:name, :room, :checkIn, :checkOut, :hours, :gross, :discount, :final, :hotel)`;
+                const historySql = `INSERT INTO hms_bill_history (guest_name, room_number, check_in_time, check_out_time, total_hours, gross_amount, discount_amount, final_amount, hotel_name, payment_mode) 
+                                    VALUES (:name, :room, :checkIn, :checkOut, :hours, :gross, :discount, :final, :hotel, :paymentMode)`;
                 await connection.execute(historySql, {
                     name: guest.GUEST_NAME,
                     room: guest.ROOM_NUMBER,
@@ -2113,7 +2198,8 @@ async function startServer() {
                     gross: grossAmount,
                     discount: discountAmount,
                     final: finalAmount,
-                    hotel: hotelName
+                    hotel: hotelName,
+                    paymentMode: paymentMode || 'Cash'
                 });
 
                 await connection.execute(
@@ -2123,6 +2209,13 @@ async function startServer() {
                 
                 await connection.commit();
                 res.json({ message: 'Checkout successful!', finalAmount: finalAmount });
+                
+                // Send Thank You Email
+                if (guest.EMAIL) {
+                    const subject = `Thank you for staying at ${hotelName}`;
+                    const html = createEmailTemplate('Thank You!', `<p>Dear ${guest.GUEST_NAME},</p><p>Thank you for staying at <strong>${hotelName}</strong>. We hope you enjoyed your stay!</p><p>We look forward to welcoming you back soon.</p><p><strong>Total Bill:</strong> ₹${finalAmount.toFixed(2)}</p>`);
+                    sendEmail(guest.EMAIL, subject, `Thank you for staying at ${hotelName}. We hope to see you again!`, html).catch(console.error);
+                }
 
             } catch (err) {
                 console.error("Checkout Error:", err);
@@ -2646,7 +2739,7 @@ async function startServer() {
             try {
                 connection = await pool.getConnection();
                 const result = await connection.execute(
-                    `SELECT feature_scroll_speed FROM hms_users WHERE hotel_name = :hotelName AND role = 'Owner' FETCH FIRST 1 ROWS ONLY`,
+                    `SELECT feature_scroll_speed, upi_id, theme_color FROM hms_users WHERE hotel_name = :hotelName AND role = 'Owner' FETCH FIRST 1 ROWS ONLY`,
                     { hotelName },
                     { outFormat: oracledb.OUT_FORMAT_OBJECT }
                 );
@@ -2673,6 +2766,150 @@ async function startServer() {
                 }
             } catch (err) {
                 res.status(500).json({ message: 'Error fetching contact details.' });
+            } finally {
+                if (connection) await connection.close();
+            }
+        });
+
+        // --- UI Settings Routes ---
+        app.get('/api/ui-settings', async (req, res) => {
+            const { hotelName } = req.query;
+            let connection;
+            try {
+                connection = await pool.getConnection();
+                const result = await connection.execute(
+                    `SELECT * FROM hms_ui_settings WHERE hotel_name = :hotelName`,
+                    { hotelName: hotelName || 'HMS_GLOBAL' },
+                    { outFormat: oracledb.OUT_FORMAT_OBJECT }
+                );
+                if (result.rows.length > 0) {
+                    res.json(result.rows[0]);
+                } else {
+                    res.json({}); // Return empty object if no settings found
+                }
+            } catch (err) {
+                console.error("Get UI Settings Error:", err);
+                res.status(500).json({ message: 'Failed to fetch UI settings.' });
+            } finally {
+                if (connection) await connection.close();
+            }
+        });
+
+        app.post('/api/ui-settings', async (req, res) => {
+            const { hotelName, primaryColor, secondaryColor, sidebarBg, sidebarText, bgColor, surfaceColor, textColor, guestLoginBg } = req.body;
+            const targetHotel = hotelName || 'HMS_GLOBAL';
+            
+            const sql = `MERGE INTO hms_ui_settings d
+                         USING (SELECT :hotelName as hotel_name FROM dual) s
+                         ON (d.hotel_name = s.hotel_name)
+                         WHEN MATCHED THEN UPDATE SET 
+                             primary_color = :primaryColor, secondary_color = :secondaryColor,
+                             sidebar_bg = :sidebarBg, sidebar_text = :sidebarText,
+                             bg_color = :bgColor, surface_color = :surfaceColor,
+                             text_color = :textColor, guest_login_bg = :guestLoginBg
+                         WHEN NOT MATCHED THEN INSERT (hotel_name, primary_color, secondary_color, sidebar_bg, sidebar_text, bg_color, surface_color, text_color, guest_login_bg)
+                         VALUES (:hotelName, :primaryColor, :secondaryColor, :sidebarBg, :sidebarText, :bgColor, :surfaceColor, :textColor, :guestLoginBg)`;
+            
+            let connection;
+            try {
+                connection = await pool.getConnection();
+                await connection.execute(sql, {
+                    hotelName: targetHotel,
+                    primaryColor: primaryColor || null,
+                    secondaryColor: secondaryColor || null,
+                    sidebarBg: sidebarBg || null,
+                    sidebarText: sidebarText || null,
+                    bgColor: bgColor || null,
+                    surfaceColor: surfaceColor || null,
+                    textColor: textColor || null,
+                    guestLoginBg: guestLoginBg || null
+                }, { autoCommit: true });
+                res.json({ message: 'UI settings saved successfully.' });
+            } catch (err) {
+                console.error("Save UI Settings Error:", err);
+                res.status(500).json({ message: 'Failed to save UI settings.' });
+            } finally {
+                if (connection) await connection.close();
+            }
+        });
+
+        // --- Employee Payroll Routes ---
+        app.get('/api/admin/employees-payroll', async (req, res) => {
+            const { hotelName } = req.query;
+            const sql = `
+                SELECT u.user_id, u.full_name, u.role, u.email,
+                       d.salary, d.bank_account, d.ifsc, d.reports_to,
+                       m.full_name as reports_to_name
+                FROM hms_users u
+                LEFT JOIN hms_employee_details d ON u.user_id = d.user_id
+                LEFT JOIN hms_users m ON d.reports_to = m.user_id
+                WHERE u.hotel_name = :hotelName AND u.role != 'Owner'
+                ORDER BY u.full_name
+            `;
+            let connection;
+            try {
+                connection = await pool.getConnection();
+                const result = await connection.execute(sql, { hotelName }, { outFormat: oracledb.OUT_FORMAT_OBJECT });
+                res.json(result.rows);
+            } catch (err) {
+                console.error("Get Payroll Error:", err);
+                res.status(500).json({ message: 'Failed to fetch payroll data.' });
+            } finally {
+                if (connection) await connection.close();
+            }
+        });
+
+        app.put('/api/admin/employees-payroll', async (req, res) => {
+            const { userId, salary, bankAccount, ifsc, reportsTo } = req.body;
+            // Oracle MERGE to upsert
+            const sql = `
+                MERGE INTO hms_employee_details d
+                USING (SELECT :userId as user_id, :salary as salary, :bank as bank_account, :ifsc as ifsc, :reportsTo as reports_to FROM dual) s
+                ON (d.user_id = s.user_id)
+                WHEN MATCHED THEN UPDATE SET salary = s.salary, bank_account = s.bank_account, ifsc = s.ifsc, reports_to = s.reports_to
+                WHEN NOT MATCHED THEN INSERT (user_id, salary, bank_account, ifsc, reports_to) VALUES (s.user_id, s.salary, s.bank_account, s.ifsc, s.reports_to)
+            `;
+            let connection;
+            try {
+                connection = await pool.getConnection();
+                await connection.execute(sql, {
+                    userId, 
+                    salary: salary || 0, 
+                    bank: bankAccount || '', 
+                    ifsc: ifsc || '', 
+                    reportsTo: reportsTo || null
+                }, { autoCommit: true });
+                res.json({ message: 'Employee details updated successfully.' });
+            } catch (err) {
+                console.error("Update Payroll Error:", err);
+                res.status(500).json({ message: 'Failed to update details.' });
+            } finally {
+                if (connection) await connection.close();
+            }
+        });
+
+        app.post('/api/admin/pay-salary', async (req, res) => {
+            const { userIds, hotelName } = req.body; // Array of user IDs
+            if (!userIds || userIds.length === 0) return res.status(400).json({ message: "No employees selected." });
+
+            let connection;
+            try {
+                connection = await pool.getConnection();
+                // Verify users exist and belong to hotel
+                // For simulation, we assume success if they exist.
+                // In a real app, we would integrate with a Payment Gateway here.
+                
+                // Log the payment (Simulated)
+                console.log(`[Payroll] Processing salary for ${userIds.length} employees in ${hotelName}`);
+                
+                // Send notification emails (Simulated loop)
+                // const users = await connection.execute(`SELECT email, full_name FROM hms_users WHERE user_id IN (${userIds.join(',')})`);
+                // users.rows.forEach(u => sendEmail(u.EMAIL, 'Salary Credited', ...));
+
+                res.json({ message: `Salary payment initiated for ${userIds.length} employee(s).` });
+            } catch (err) {
+                console.error("Pay Salary Error:", err);
+                res.status(500).json({ message: 'Payment processing failed.' });
             } finally {
                 if (connection) await connection.close();
             }
@@ -2921,6 +3158,46 @@ async function startServer() {
     process.once('SIGTERM', closePoolAndExit).once('SIGINT', closePoolAndExit);
 }
 
+// --- Auto-Cancel Pending Payments (Cron Job) ---
+setInterval(async () => {
+    let connection;
+    try {
+        // Connect to DB
+        const pool = oracledb.getPool();
+        if (!pool) return;
+        
+        connection = await pool.getConnection();
+        
+        // Cancel bookings pending for more than 30 minutes
+        const timeLimit = new Date(Date.now() - 30 * 60 * 1000);
+        
+        const result = await connection.execute(
+            `SELECT booking_id, email, hotel_name FROM hms_online_bookings 
+             WHERE booking_status = 'Pending Payment' AND updated_at < :timeLimit`,
+            { timeLimit },
+            { outFormat: oracledb.OUT_FORMAT_OBJECT }
+        );
+        
+        if (result.rows.length > 0) {
+            console.log(`[Auto-Cancel] Found ${result.rows.length} expired pending bookings.`);
+            for (const b of result.rows) {
+                await connection.execute(
+                    `UPDATE hms_online_bookings SET booking_status = 'Declined' WHERE booking_id = :id`,
+                    { id: b.BOOKING_ID }, { autoCommit: true }
+                );
+                if (b.EMAIL) {
+                    const msg = `Your booking #${b.BOOKING_ID} at ${b.HOTEL_NAME} has been cancelled due to payment timeout.`;
+                    const html = createEmailTemplate('Booking Cancelled', `<p>${msg}</p>`);
+                    sendEmail(b.EMAIL, 'Booking Cancelled - Payment Timeout', msg, html).catch(console.error);
+                }
+            }
+        }
+    } catch (e) {
+        console.error("Auto-cancel error:", e.message);
+    } finally {
+        if (connection) { try { await connection.close(); } catch(e) {} }
+    }
+}, 60 * 1000); // Run every minute
 
 
 // Run the server

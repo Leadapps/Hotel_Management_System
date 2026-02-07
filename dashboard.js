@@ -23,28 +23,170 @@ const API_BASE_URL = '/api';
 function injectDarkModeStyles() {
     const style = document.createElement('style');
     style.textContent = `
-        body.dark-mode { background-color: #18191a; color: #e4e6eb; color-scheme: dark; }
-        .dark-mode .sidebar { background-color: #242526; border-right: 1px solid #3a3b3c; }
-        .dark-mode .sidebar ul li:hover, .dark-mode .sidebar ul li.active { background-color: #3a3b3c; }
-        .dark-mode .main-content { background-color: #18191a; }
-        .dark-mode .tab-content, .dark-mode .modal-content, .dark-mode .bill-card { background-color: #242526; color: #e4e6eb; box-shadow: 0 2px 10px rgba(0,0,0,0.5); }
-        .dark-mode .admin-toolbar, .dark-mode .owner-toolbar { background-color: #242526 !important; color: #e4e6eb; }
-        .dark-mode table { background-color: #242526; color: #e4e6eb; }
-        .dark-mode th { background-color: #3a3b3c; color: #fff; border-bottom: 1px solid #4e4f50; }
-        .dark-mode td { border-bottom: 1px solid #3a3b3c; }
-        .dark-mode input, .dark-mode select, .dark-mode textarea { background-color: #3a3b3c; color: #e4e6eb; border: 1px solid #4e4f50; }
-        .dark-mode input::placeholder, .dark-mode textarea::placeholder { color: #b0b3b8; }
-        .dark-mode #adminNotifDropdown { background-color: #242526; border-color: #4e4f50; }
-        .dark-mode option { background-color: #3a3b3c; color: #e4e6eb; }
-        .dark-mode h1, .dark-mode h2, .dark-mode h3, .dark-mode h4, .dark-mode p, .dark-mode label { color: #e4e6eb; }
+        /* --- USER FRIENDLY COLOR PALETTE (Light Mode) --- */
+        :root {
+            --primary-color: #6366f1; /* Indigo 500 - Softer than Royal Blue */
+            --primary-hover: #4f46e5;
+            --secondary-color: #64748b; /* Slate 500 */
+            --success-color: #10b981; /* Emerald 500 */
+            --danger-color: #f43f5e; /* Rose 500 - Softer Red */
+            --warning-color: #f59e0b; /* Amber 500 */
+            --info-color: #3b82f6; /* Blue 500 */
+            --bg-color: #2c9729; /* Gray 100 - Softer Background */
+            --surface-color: #ffffff;
+            --text-color: #000000; /* Black - Max Contrast */
+            --text-muted: #6b7280;
+            --border-color: #f5f5f8;
+            --sidebar-bg: #faf6f6;
+            --sidebar-active-bg: #e4e8f1; /* Indigo 50 */
+            --sidebar-active-text: #4338ca; /* Indigo 700 */
+            --shadow-sm: 0 1px 2px 0 rgba(0, 0, 0, 0.05);
+            --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
+            --toast-bg: #1f2937;
+            --toast-text: #f9fafb;
+        }
+
+        /* Loading Overlay */
+        #loadingOverlay {
+            position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(255, 255, 255, 0.8);
+            backdrop-filter: blur(5px);
+            z-index: 9999;
+            display: none; flex-direction: column; align-items: center; justify-content: center;
+            animation: fadeIn 0.3s ease;
+        }
+
+        body {
+            background-color: var(--bg-color);
+            color: var(--text-color);
+            font-family: 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+        }
+
+        /* Enhanced UI Elements */
+        .main-btn, .confirm-btn {
+            border-radius: 8px !important;
+            background-color: var(--primary-color) !important;
+            border: none !important;
+            box-shadow: 0 4px 6px rgba(67, 97, 238, 0.3);
+            transition: transform 0.2s, box-shadow 0.2s;
+            padding: 10px 20px;
+        }
+        .main-btn:hover, .confirm-btn:hover {
+            background-color: var(--primary-hover) !important;
+            transform: translateY(-2px);
+            box-shadow: 0 6px 12px rgba(67, 97, 238, 0.4);
+        }
+
+        .delete-btn {
+            border-radius: 8px !important;
+            background-color: var(--danger-color) !important;
+            box-shadow: 0 4px 6px rgba(239, 35, 60, 0.3);
+            padding: 10px 20px;
+        }
+        .delete-btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 6px 12px rgba(239, 35, 60, 0.4);
+        }
+
+        input, select, textarea {
+            border-radius: 8px !important;
+            border: 1px solid #fffbfb !important;
+            padding: 12px !important;
+            transition: all 0.3s ease;
+        }
+        input:focus, select:focus, textarea:focus {
+            border-color: var(--primary-color) !important;
+            box-shadow: 0 0 0 3px rgba(67, 97, 238, 0.15) !important;
+            outline: none;
+        }
+
+        .bill-card, .tab-content, .modal-content {
+            background-color: var(--surface-color);
+            border-radius: 12px !important;
+            box-shadow: var(--shadow-md) !important;
+            border: 1px solid var(--border-color);
+        }
+
+        .sidebar {
+            background-color: var(--sidebar-bg);
+            box-shadow: 2px 0 10px rgba(0,0,0,0.05);
+            border-right: none;
+        }
+        .sidebar ul li {
+            margin: 5px 10px;
+            border-radius: 8px;
+            transition: all 0.3s ease;
+            color: var(--text-color); /* Ensure text is visible */
+        }
+        .sidebar ul li:hover, .sidebar ul li.active {
+            background-color: var(--sidebar-active-bg) !important;
+            color: var(--sidebar-active-text) !important;
+            font-weight: 600;
+        }
+
+        /* Icon Visibility Enhancements */
+        .sidebar ul li i {
+            font-size: 1.25rem; /* Larger icons */
+            width: 30px;
+            text-align: center;
+            margin-right: 12px;
+            transition: transform 0.2s;
+        }
+        .sidebar ul li:hover i {
+            transform: scale(1.1);
+        }
+        button i {
+            margin-right: 8px;
+            font-size: 1.1em;
+        }
+
+        /* --- DARK MODE OVERRIDES --- */
+        body.dark-mode {
+            --bg-color: #1a1a1a; /* Dark Grey Background */
+            --surface-color: #000000; /* Black Surface (Records) */
+            --text-color: #faf8f8; /* Pure White Text */
+            --text-muted: #fcf9f9; /* Light Grey Muted */
+            --border-color: #444444; /* Grey Border */s
+            --sidebar-bg: #000000;s
+            --sidebar-active-bg: #0a0909;
+            --sidebar-active-text: #f8f7f7;
+            --primary-color: #818cf8; /* Indigo 400 */
+            --primary-hover: #6366f1;
+            --danger-color: #fb7185; /* Rose 400 */
+            --success-color: #34d399; /* Emerald 400 */
+            --shadow-sm: 0 1px 2px 0 rgba(0, 0, 0, 0.5);
+            --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.7);
+            --toast-bg: #f7f8fa;
+            --toast-text: #111827;
+            color-scheme: dark;
+        }
+
+        .dark-mode .sidebar { background-color: var(--sidebar-bg); border-right: 1px solid var(--border-color); }
+        .dark-mode .main-content { background-color: var(--bg-color); }
+        .dark-mode .admin-toolbar, .dark-mode .owner-toolbar { background-color: var(--surface-color) !important; color: var(--text-color); border: 1px solid var(--border-color); }
+        .dark-mode table { background-color: var(--surface-color); color: var(--text-color); }
+        .dark-mode th { background-color: #111111; color: var(--text-color); border-bottom: 1px solid var(--border-color); }
+        .dark-mode td { border-bottom: 1px solid var(--border-color); }
+        .dark-mode input, .dark-mode select, .dark-mode textarea { background-color: #000000; color: #f7f3f3; border: 1px solid var(--border-color); }
+        .dark-mode input::placeholder, .dark-mode textarea::placeholder { color: var(--text-muted); }
+        .dark-mode #adminNotifDropdown, .dark-mode #staffNotifDropdown, .dark-mode #ownerNotifDropdown { background-color: var(--surface-color); border-color: var(--border-color); }
+        .dark-mode option { background-color: var(--surface-color); color: var(--text-color); }
+        .dark-mode h1, .dark-mode h2, .dark-mode h3, .dark-mode h4, .dark-mode p, .dark-mode label { color: var(--text-color); }
         
+        .dark-mode #loadingOverlay {
+            background: rgba(16, 25, 37, 0.85);
+        }
+
+        /* Fix for sidebar items and icons in dark mode */
+        .dark-mode .sidebar ul li, .dark-mode .sidebar ul li i { color: #8f8e8e !important; }
+
         /* Autofill fix for dark mode */
         .dark-mode input:-webkit-autofill,
         .dark-mode input:-webkit-autofill:hover, 
         .dark-mode input:-webkit-autofill:focus, 
         .dark-mode input:-webkit-autofill:active {
-            -webkit-box-shadow: 0 0 0 30px #3a3b3c inset !important;
-            -webkit-text-fill-color: #e4e6eb !important;
+            -webkit-box-shadow: 0 0 0 30px #101a24 inset !important;
+            -webkit-text-fill-color: var(--text-color) !important;
             transition: background-color 5000s ease-in-out 0s;
         }
     `;
@@ -79,6 +221,11 @@ function updateDarkModeButton(isDark) {
     }
 }
 
+function applyThemeColor(color) {
+    if (!color) return;
+    document.documentElement.style.setProperty('--primary-color', color);
+}
+
 // --- APP STATE ---
 let editingRoomNumber = null;
 let editingGuestId = null;
@@ -88,6 +235,13 @@ let kitchenInitialized = false;
 let previousHousekeepingIds = new Set();
 let housekeepingInitialized = false;
 let knownNotificationIds = new Set();
+let lastOnlineBookingsJson = '';
+let lastKitchenOrdersJson = '';
+let lastDeliveryOrdersJson = '';
+let lastHousekeepingJson = '';
+let previousBookingIds = new Set();
+let bookingsInitialized = false;
+let isFetchingBookings = false;
 
 // Initialize read notifications from DB
 let readNotificationIds = new Set(); 
@@ -210,7 +364,7 @@ async function setupSpecialRoleUI() {
         document.querySelector('.main-content').appendChild(div);
         
         await renderKitchenOrders();
-        setInterval(() => renderKitchenOrders(true), 10000); // Auto-refresh (silent)
+        setInterval(() => renderKitchenOrders(true), 2000); // Auto-refresh (silent)
     }
     
     if (user.role === 'Waiter') {
@@ -229,7 +383,7 @@ async function setupSpecialRoleUI() {
         document.querySelector('.main-content').appendChild(div);
         
         await renderDeliveryOrders();
-        setInterval(() => renderDeliveryOrders(true), 10000); // Auto-refresh (silent)
+        setInterval(() => renderDeliveryOrders(true), 2000); // Auto-refresh (silent)
     }
 
     if (user.role === 'Housekeeping') {
@@ -248,7 +402,7 @@ async function setupSpecialRoleUI() {
         document.querySelector('.main-content').appendChild(div);
         
         await renderHousekeepingRequests();
-        setInterval(() => renderHousekeepingRequests(true), 10000); // Auto-refresh (silent)
+        setInterval(() => renderHousekeepingRequests(true), 2000); // Auto-refresh (silent)
 
         // Add Maintenance Tab for Housekeeping
         const liM = document.createElement('li');
@@ -296,7 +450,7 @@ async function setupAdminUI() {
     const mainContent = document.querySelector('.main-content');
     const toolbar = document.createElement('div');
     toolbar.className = 'admin-toolbar';
-    toolbar.style.cssText = 'background: #fff; padding: 15px; margin-bottom: 20px; border-radius: 8px; box-shadow: 0 2px 5px rgba(0,0,0,0.05); display: flex; gap: 15px; align-items: center; flex-wrap: wrap;';
+    toolbar.style.cssText = 'background: var(--surface-color); color: var(--text-color); padding: 15px; margin-bottom: 20px; border-radius: 8px; box-shadow: 0 2px 5px rgba(0,0,0,0.05); display: flex; gap: 15px; align-items: center; flex-wrap: wrap;';
     
     // Switch Hotel Button
     const switchBtn = document.createElement('button');
@@ -327,6 +481,16 @@ async function setupAdminUI() {
     };
     toolbar.appendChild(healthBtn);
 
+    // UI Design Button
+    const uiBtn = document.createElement('button');
+    uiBtn.className = 'main-btn';
+    uiBtn.innerHTML = '<i class="fa-solid fa-palette"></i> UI Design';
+    uiBtn.onclick = function() { 
+        openTab('uiDesignContainer', null); 
+        renderUIDesign(); 
+    };
+    toolbar.appendChild(uiBtn);
+
     // Broadcast Button
     const broadcastBtn = document.createElement('button');
     broadcastBtn.className = 'main-btn';
@@ -345,7 +509,7 @@ async function setupAdminUI() {
     const searchContainer = document.createElement('div');
     searchContainer.style.cssText = 'position: relative; margin-left: auto; margin-right: 15px;';
     searchContainer.innerHTML = `
-        <input type="text" id="globalSearchInput" placeholder="Search guests, bookings..." style="padding: 8px 30px 8px 10px; border: 1px solid #ccc; border-radius: 4px; width: 250px;">
+        <input type="text" id="globalSearchInput" placeholder="Search guests, bookings..." style="padding: 8px 30px 8px 10px; border: 1px solid var(--border-color); background: var(--surface-color); color: var(--text-color); border-radius: 4px; width: 250px;">
         <i class="fa-solid fa-magnifying-glass" style="position: absolute; right: 10px; top: 50%; transform: translateY(-50%); color: #888; cursor: pointer;" onclick="performGlobalSearch()"></i>
     `;
     searchContainer.querySelector('input').addEventListener('keypress', (e) => {
@@ -381,6 +545,12 @@ async function setupAdminUI() {
         <div id="healthStatusContent">Loading...</div>
     `;
     mainContent.appendChild(healthDiv);
+
+    const uiDiv = document.createElement('div');
+    uiDiv.id = 'uiDesignContainer';
+    uiDiv.className = 'tab-content';
+    uiDiv.innerHTML = `<h2>UI Design & Customization</h2><div id="uiDesignContent">Loading...</div>`;
+    mainContent.appendChild(uiDiv);
 
     const backupDiv = document.createElement('div');
     backupDiv.id = 'backupRestoreContainer';
@@ -459,15 +629,15 @@ function createNotificationElement(badgeId, dropdownId, listId) {
     div.className = 'notification-wrapper'; // Class for click-outside detection
     div.style.cssText = 'position: relative; cursor: pointer;';
     div.innerHTML = `
-        <i class="fa-solid fa-bell" style="font-size: 20px; color: #555;" onclick="document.getElementById('${dropdownId}').style.display = document.getElementById('${dropdownId}').style.display === 'none' ? 'block' : 'none'"></i>
+        <i class="fa-solid fa-bell" style="font-size: 20px; color: var(--text-color);" onclick="document.getElementById('${dropdownId}').style.display = document.getElementById('${dropdownId}').style.display === 'none' ? 'block' : 'none'"></i>
         <span id="${badgeId}" style="position: absolute; top: -5px; right: -5px; background: red; color: white; font-size: 10px; padding: 2px 5px; border-radius: 50%; display: none;">0</span>
-        <div id="${dropdownId}" style="display: none; position: absolute; right: 0; top: 30px; background: white; border: 1px solid #ddd; width: 300px; box-shadow: 0 4px 8px rgba(0,0,0,0.1); z-index: 1000; border-radius: 4px; text-align: left;">
-            <div style="padding: 10px; border-bottom: 1px solid #eee; font-weight: bold; color: #333; display: flex; justify-content: space-between; align-items: center;">
+        <div id="${dropdownId}" style="display: none; position: absolute; right: 0; top: 30px; background: var(--surface-color); color: var(--text-color); border: 1px solid var(--border-color); width: 300px; box-shadow: 0 4px 8px rgba(0,0,0,0.1); z-index: 1000; border-radius: 4px; text-align: left;">
+            <div style="padding: 10px; border-bottom: 1px solid var(--border-color); font-weight: bold; display: flex; justify-content: space-between; align-items: center;">
                 <span>Notifications</span>
                 <button onclick="markAllNotificationsRead('${badgeId}', '${listId}')" style="background:none; border:none; color:#007bff; cursor:pointer; font-size:11px;">Mark all read</button>
             </div>
             <div id="${listId}" style="max-height: 300px; overflow-y: auto;">
-                <p style="padding: 10px; color: #666; margin: 0;">No new notifications</p>
+                <p style="padding: 10px; color: var(--text-muted); margin: 0;">No new notifications</p>
             </div>
         </div>
     `;
@@ -595,6 +765,7 @@ function editOwner(owner) {
         <input type="email" id="editOwnerEmail" placeholder="Email" value="${owner.EMAIL}" style="width: 100%; padding: 8px; margin: 8px 0; box-sizing: border-box;">
         <input type="text" id="editOwnerMobile" placeholder="Mobile Number" value="${owner.MOBILE_NUMBER}" style="width: 100%; padding: 8px; margin: 8px 0; box-sizing: border-box;">
         <input type="text" id="editOwnerAddress" placeholder="Address" value="${owner.ADDRESS || ''}" style="width: 100%; padding: 8px; margin: 8px 0; box-sizing: border-box;">
+        <input type="text" id="editOwnerUpiId" placeholder="UPI ID (e.g. name@bank)" value="${owner.UPI_ID || ''}" style="width: 100%; padding: 8px; margin: 8px 0; box-sizing: border-box;">
         <p style="font-size:12px; color:#666;">Note: Hotel Name cannot be changed here.</p>
         
         <div style="margin-top: 15px; display: flex; gap: 10px; justify-content: center;">
@@ -610,7 +781,8 @@ async function submitOwnerEdit(userId) {
         fullName: document.getElementById('editOwnerName').value.trim(),
         email: document.getElementById('editOwnerEmail').value.trim(),
         mobile: document.getElementById('editOwnerMobile').value.trim(),
-        address: document.getElementById('editOwnerAddress').value.trim()
+        address: document.getElementById('editOwnerAddress').value.trim(),
+        upiId: document.getElementById('editOwnerUpiId').value.trim()
     };
 
     try {
@@ -621,11 +793,13 @@ async function submitOwnerEdit(userId) {
             body: JSON.stringify(updatedData)
         });
         const result = await response.json();
-        showModal(result.message);
+        hideLoading();
+        showToast(result.message, response.ok ? 'success' : 'error');
         if (response.ok) {
             renderOwnerManagement();
         }
     } catch (error) {
+        hideLoading();
         console.error('Error updating owner:', error);
         showModal('Failed to update owner details.');
     }
@@ -636,7 +810,7 @@ async function deleteOwner(userId, name) {
         try {
             const response = await fetch(`${API_BASE_URL}/admin/owners/${userId}`, { method: 'DELETE' });
             const result = await response.json();
-            showModal(result.message);
+            showToast(result.message, response.ok ? 'success' : 'error');
             if (response.ok) renderOwnerManagement();
         } catch (e) {
             showModal('Failed to delete owner.');
@@ -654,7 +828,7 @@ async function regenerateHotelSlug(userId, hotelName) {
                 body: JSON.stringify({ userId })
             });
             const result = await response.json();
-            showModal(result.message);
+            showToast(result.message, response.ok ? 'success' : 'error');
             if (response.ok) renderOwnerManagement();
         } catch (e) {
             showModal('Failed to regenerate slug.');
@@ -740,7 +914,7 @@ async function saveOwner() {
         const result = await response.json();
         if (response.ok) {
             closeModal();
-            showModal('Owner account created successfully!');
+            showToast('Owner account created successfully!', 'success');
             renderOwnerManagement();
             // Refresh hotel selector if needed (requires page reload or complex logic, simple reload is easier)
             setTimeout(() => location.reload(), 2000); 
@@ -785,6 +959,10 @@ async function renderHousekeepingRequests(silent = false) {
             housekeepingInitialized = true;
         }
         previousHousekeepingIds = currentIds;
+
+        const currentJson = JSON.stringify(requests);
+        if (silent && currentJson === lastHousekeepingJson) return;
+        lastHousekeepingJson = currentJson;
         
         if (!silent) closeModal();
         if (requests.length === 0) {
@@ -922,7 +1100,7 @@ async function submitChangePassword() {
             body: JSON.stringify({ username: user.username, currentPassword, newPassword })
         });
         const result = await response.json();
-        showModal(result.message || (response.ok ? 'Password updated successfully!' : 'Failed to update password.'));
+        showToast(result.message || (response.ok ? 'Password updated successfully!' : 'Failed to update password.'), response.ok ? 'success' : 'error');
     } catch (error) {
         console.error(error);
         showModal('An error occurred.');
@@ -930,6 +1108,42 @@ async function submitChangePassword() {
 }
 
 // --- MODAL DIALOG ---
+function showToast(message, type = 'success') {
+    let container = document.getElementById('toast-container');
+    if (!container) {
+        container = document.createElement('div');
+        container.id = 'toast-container';
+        container.style.cssText = 'position: fixed; top: 20px; right: 20px; z-index: 10000; display: flex; flex-direction: column; gap: 10px;';
+        document.body.appendChild(container);
+    }
+
+    const toast = document.createElement('div');
+    const bgColor = type === 'error' ? '#dc3545' : (type === 'info' ? '#17a2b8' : '#28a745');
+    const icon = type === 'error' ? 'fa-circle-exclamation' : (type === 'info' ? 'fa-circle-info' : 'fa-circle-check');
+    
+    toast.style.cssText = `background: ${bgColor}; color: white; padding: 15px 20px; border-radius: 8px; box-shadow: 0 10px 25px rgba(0,0,0,0.2); opacity: 0; transform: translateX(100%); transition: all 0.4s cubic-bezier(0.68, -0.55, 0.27, 1.55); min-width: 300px; display: flex; align-items: center; gap: 12px; font-size: 14px; font-weight: 500;`;
+    toast.innerHTML = `<i class="fa-solid ${icon}" style="font-size: 18px;"></i> <span>${message}</span>`;
+
+    container.appendChild(toast);
+
+    requestAnimationFrame(() => {
+        toast.style.opacity = '1';
+        toast.style.transform = 'translateX(0)';
+    });
+
+    let timeoutId;
+    const removeToast = () => {
+        toast.style.opacity = '0';
+        toast.style.transform = 'translateX(100%)';
+        setTimeout(() => toast.remove(), 300);
+    };
+
+    const startTimer = () => { timeoutId = setTimeout(removeToast, 3000); };
+    toast.addEventListener('mouseenter', () => clearTimeout(timeoutId));
+    toast.addEventListener('mouseleave', startTimer);
+    startTimer();
+}
+
 // MODIFICATION: This function is rewritten to be more robust.
 function showModal(message, onConfirm, onCancel) {
     const modal = document.getElementById('actionModal');
@@ -983,33 +1197,56 @@ function closeModal() {
     document.getElementById('actionModal').style.display = 'none';
     // It's good practice to clear the content so it doesn't show old data briefly
     // if opened again for another purpose.
-    document.getElementById('modalBox').innerHTML = ''; 
+    document.getElementById('modalBox').innerHTML = '';
+    
+    // Also hide loading overlay if it exists
+    const loader = document.getElementById('loadingOverlay');
+    if (loader) loader.style.display = 'none';
 }
 
 function showLoading(message) {
-    const modal = document.getElementById('actionModal');
-    const modalBox = document.getElementById('modalBox');
-    
-    // Inject CSS for spinner if not present
-    if (!document.getElementById('loaderStyles')) {
-        const style = document.createElement('style');
-        style.id = 'loaderStyles';
-        style.innerHTML = `
-            .custom-loader { width: 50px; height: 50px; border: 5px solid #f3f3f3; border-top: 5px solid #007bff; border-radius: 50%; animation: spin 1s linear infinite; margin: 20px auto; }
-            @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
-            .loading-text { font-size: 18px; color: #555; font-weight: 500; animation: pulse 1.5s infinite ease-in-out; }
-            @keyframes pulse { 0% { opacity: 0.6; } 50% { opacity: 1; } 100% { opacity: 0.6; } }
-        `;
-        document.head.appendChild(style);
+    let overlay = document.getElementById('loadingOverlay');
+    if (!overlay) {
+        overlay = document.createElement('div');
+        overlay.id = 'loadingOverlay';
+        document.body.appendChild(overlay);
+        
+        // Inject CSS for spinner if not present
+        if (!document.getElementById('loaderStyles')) {
+            const style = document.createElement('style');
+            style.id = 'loaderStyles';
+            style.innerHTML = `
+                .loader-container { position: relative; width: 100px; height: 60px; margin: 0 auto 20px; }
+                .hotel-icon { position: absolute; right: 0; bottom: 0; font-size: 40px; color: #007bff; }
+                .man-icon { position: absolute; left: 0; bottom: 0; font-size: 25px; color: #555; animation: walkIn 2s infinite linear; }
+                @keyframes walkIn { 
+                    0% { left: 0; opacity: 0; } 
+                    10% { opacity: 1; }
+                    80% { left: 60px; opacity: 1; } 
+                    100% { left: 60px; opacity: 0; } 
+                }
+                .loading-text { font-size: 18px; color: #555; font-weight: 500; animation: pulse 1.5s infinite ease-in-out; }
+                @keyframes pulse { 0% { opacity: 0.6; } 50% { opacity: 1; } 100% { opacity: 0.6; } }
+            `;
+            document.head.appendChild(style);
+        }
     }
 
-    modalBox.innerHTML = `
+    overlay.innerHTML = `
         <div style="text-align: center; padding: 20px;">
-            <div class="custom-loader"></div>
+            <div class="loader-container">
+                <i class="fa-solid fa-person-walking-luggage man-icon"></i>
+                <i class="fa-solid fa-hotel hotel-icon"></i>
+            </div>
             <p class="loading-text">${message}</p>
         </div>
     `;
-    modal.style.display = 'flex';
+    overlay.style.display = 'flex';
+}
+
+function hideLoading() {
+    const overlay = document.getElementById('loadingOverlay');
+    if (overlay) overlay.style.display = 'none';
 }
 
 // --- UI HELPER: HEADER ACTIONS ---
@@ -1116,16 +1353,39 @@ function setupHeaderAction(tableId, buttonId, buttonText, onClick) {
 }
 
 // --- ONLINE BOOKING MANAGEMENT ---
-async function renderOnlineBookings() {
-    showLoading("Loading online bookings...");
+async function renderOnlineBookings(silent = false) {
+    if (silent && isFetchingBookings) return;
+    isFetchingBookings = true;
+
+    if (!silent) showLoading("Loading online bookings...");
     try {
         const response = await fetchWithRetry(`${API_BASE_URL}/online-bookings?hotelName=${encodeURIComponent(getContextHotel())}`);
         const bookings = await response.json();
 
-        const table = document.getElementById('onlineBookingTable');
-        document.getElementById('totalOnlineBookings').textContent = bookings.length;
+        // Sound Notification Logic
+        const currentIds = new Set(bookings.map(b => b.BOOKING_ID));
+        if (bookingsInitialized) {
+            const hasNew = bookings.some(b => !previousBookingIds.has(b.BOOKING_ID));
+            if (hasNew && userInteracted) {
+                notificationSound.currentTime = 0;
+                notificationSound.play().catch(e => console.warn("Sound blocked:", e));
+            }
+        } else {
+            bookingsInitialized = true;
+        }
+        previousBookingIds = currentIds;
 
-        closeModal();
+        const table = document.getElementById('onlineBookingTable');
+        if (document.getElementById('totalOnlineBookings')) {
+            document.getElementById('totalOnlineBookings').textContent = bookings.length;
+        }
+
+        if (!silent) closeModal();
+
+        const currentJson = JSON.stringify(bookings);
+        if (silent && currentJson === lastOnlineBookingsJson) return;
+        lastOnlineBookingsJson = currentJson;
+
         if (bookings.length === 0) {
             table.innerHTML = '<tr><td colspan="4">No pending online bookings.</td></tr>';
             return;
@@ -1142,21 +1402,24 @@ async function renderOnlineBookings() {
                 <td>${b.ROOM_TYPE}</td>
                 <td class="actions-cell">
                     ${b.BOOKING_STATUS === 'Booked' || b.BOOKING_STATUS === 'Pending Payment' ? `
-                        <button class="confirm-btn" onclick="acceptBooking(${b.BOOKING_ID})">
+                        <button class="confirm-btn" onclick="acceptBooking('${b.BOOKING_ID}')">
                             <i class="fa-solid fa-check"></i> Accept
                         </button>
                         ${b.BOOKING_STATUS !== 'Pending Payment' ? `
-                        <button class="main-btn" style="background-color:#ffc107; color:black;" onclick="markPendingPayment(${b.BOOKING_ID})">
+                        <button class="main-btn" style="background-color:#ffc107; color:black;" onclick="markPendingPayment('${b.BOOKING_ID}')">
                             <i class="fa-solid fa-clock"></i> Pay
-                        </button>` : ''}
-                        <button class="delete-btn" onclick="declineBooking(${b.BOOKING_ID})">
+                        </button>` : `
+                        <button class="confirm-btn" style="background-color:#28a745;" onclick="markPaymentReceived('${b.BOOKING_ID}')">
+                            <i class="fa-solid fa-money-bill"></i> Paid
+                        </button>`}
+                        <button class="delete-btn" onclick="declineBooking('${b.BOOKING_ID}')">
                             <i class="fa-solid fa-times"></i> Decline
                         </button>
                     ` : `
-                        <button class="confirm-btn" style="background-color:#17a2b8;" onclick="checkInConfirmedBooking(${b.BOOKING_ID})">
+                        <button class="confirm-btn" style="background-color:#17a2b8;" onclick="checkInConfirmedBooking('${b.BOOKING_ID}')">
                             <i class="fa-solid fa-door-open"></i> Check In
                         </button>
-                        <button class="delete-btn" onclick="declineBooking(${b.BOOKING_ID})">
+                        <button class="delete-btn" onclick="declineBooking('${b.BOOKING_ID}')">
                             <i class="fa-solid fa-ban"></i> Cancel
                         </button>
                     `}
@@ -1164,9 +1427,13 @@ async function renderOnlineBookings() {
             </tr>
         `).join('');
     } catch (error) {
-        closeModal();
         console.error('Failed to fetch online bookings:', error);
-        document.getElementById('onlineBookingTable').innerHTML = '<tr><td colspan="4">Connection failed. Please ensure the backend server is running.</td></tr>';
+        if (!silent) {
+            closeModal();
+            document.getElementById('onlineBookingTable').innerHTML = '<tr><td colspan="4">Connection failed. Please ensure the backend server is running.</td></tr>';
+        }
+    } finally {
+        isFetchingBookings = false;
     }
 }
 
@@ -1181,6 +1448,7 @@ async function acceptBooking(bookingId) {
                 body: JSON.stringify({ bookingId, hotelName: getContextHotel() })
             });
             const otpResult = await otpResponse.json();
+            hideLoading();
             if (!otpResponse.ok) {
                 return showModal(otpResult.message || 'Failed to send OTP.');
             }
@@ -1202,7 +1470,6 @@ async function acceptBooking(bookingId) {
                     <option value="Other">Other</option>
                 </select>
                 <select id="onlineGuestVerificationType" style="width: 100%; padding: 8px; margin: 8px 0; box-sizing: border-box;">
-                    <option value="">Select Verification ID Type</option>
                     <option value="Aadhaar Card">Aadhaar Card</option>
                     <option value="PAN Card">PAN Card</option>
                     <option value="Driving License">Driving License</option>
@@ -1211,13 +1478,15 @@ async function acceptBooking(bookingId) {
                 </select>
                 <input type="text" id="onlineGuestVerificationId" placeholder="Verification ID Number" style="width: 100%; padding: 8px; margin: 8px 0; box-sizing: border-box;">
                 <div style="margin-top: 15px; display: flex; gap: 10px; justify-content: center;">
-                    <button class="confirm-btn" onclick="confirmOnlineBooking(${bookingId})">Confirm Check-in</button>
+                    <button class="confirm-btn" onclick="confirmOnlineBooking('${bookingId}')">Confirm Check-in</button>
+                    <button class="main-btn" style="background-color: #6c757d;" onclick="resendBookingOtp('${bookingId}')">Resend OTP</button>
                     <button class="cancel-btn" onclick="closeModal()">Cancel</button>
                 </div>
             `;
             modal.style.display = 'flex';
 
         } catch (error) {
+            hideLoading();
             showModal('A network error occurred while sending the OTP.');
         }
     });
@@ -1249,7 +1518,7 @@ function checkInConfirmedBooking(bookingId) {
         </select>
         <input type="text" id="onlineGuestVerificationId" placeholder="Verification ID Number" style="width: 100%; padding: 8px; margin: 8px 0; box-sizing: border-box;">
         <div style="margin-top: 15px; display: flex; gap: 10px; justify-content: center;">
-            <button class="confirm-btn" onclick="confirmOnlineBooking(${bookingId})">Confirm Check-in</button>
+            <button class="confirm-btn" onclick="confirmOnlineBooking('${bookingId}')">Confirm Check-in</button>
             <button class="cancel-btn" onclick="closeModal()">Cancel</button>
         </div>
     `;
@@ -1288,7 +1557,7 @@ async function confirmOnlineBooking(bookingId) {
 
         const result = await response.json();
         closeModal();
-        showModal(result.message || 'An error occurred.');
+        showToast(result.message || 'An error occurred.', response.ok ? 'success' : 'error');
 
         if (response.ok) {
             renderOnlineBookings();
@@ -1313,7 +1582,22 @@ async function markPendingPayment(bookingId) {
         const result = await response.json();
         closeModal();
         if (response.ok) renderOnlineBookings();
-        else showModal(result.message);
+        else showToast(result.message, 'error');
+    } catch (e) { closeModal(); showModal("Failed to update status."); }
+}
+
+async function markPaymentReceived(bookingId) {
+    try {
+        showLoading("Updating status...");
+        const response = await fetch(`${API_BASE_URL}/online-bookings/payment-received`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ bookingId, hotelName: getContextHotel() })
+        });
+        const result = await response.json();
+        closeModal();
+        if (response.ok) renderOnlineBookings();
+        else showToast(result.message, 'error');
     } catch (e) { closeModal(); showModal("Failed to update status."); }
 }
 
@@ -1348,7 +1632,7 @@ function declineBooking(bookingId) {
 
             const result = await response.json();
             closeModal();
-            showModal(result.message || 'An error occurred.');
+            showToast(result.message || 'An error occurred.', response.ok ? 'success' : 'error');
 
             if (response.ok) {
                 renderOnlineBookings(); // Refresh the list of pending bookings
@@ -1361,6 +1645,39 @@ function declineBooking(bookingId) {
     };
 }
 
+async function resendBookingOtp(bookingId) {
+    try {
+        showLoading("Resending OTP...");
+        const response = await fetch(`${API_BASE_URL}/online-bookings/send-accept-otp`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ bookingId, hotelName: getContextHotel() })
+        });
+        const result = await response.json();
+        hideLoading();
+        showToast(result.message, response.ok ? 'success' : 'error');
+    } catch (e) {
+        hideLoading();
+        showToast("Failed to resend OTP.", 'error');
+    }
+}
+
+async function resendGuestCheckinOtp(email) {
+    try {
+        showLoading("Resending OTP...");
+        const response = await fetch(`${API_BASE_URL}/guest/send-checkin-otp`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ email })
+        });
+        const result = await response.json();
+        hideLoading();
+        showToast(result.message, response.ok ? 'success' : 'error');
+    } catch (e) {
+        hideLoading();
+        showToast("Failed to resend OTP.", 'error');
+    }
+}
 
 // --- ROOM MANAGEMENT ---
 async function renderRooms() {
@@ -1567,10 +1884,10 @@ async function saveRoom() {
       });
       const result = await response.json();
       if (response.ok) {
-        showModal(result.message || 'Room saved successfully!');
+        showToast(result.message || 'Room saved successfully!', 'success');
         renderRooms(); 
       } else {
-        showModal(result.message || 'Failed to save room.');
+        showToast(result.message || 'Failed to save room.', 'error');
       }
     } catch (error) {
       console.error('Error saving room:', error);
@@ -1587,7 +1904,7 @@ async function deleteRoom(roomNumber) {
                 method: 'DELETE' 
             });
             const result = await response.json();
-            showModal(result.message);
+            showToast(result.message, response.ok ? 'success' : 'error');
             if (response.ok) renderRooms();
         } catch (error) {
             console.error('Error deleting room:', error);
@@ -1700,8 +2017,8 @@ async function renderAvailability() {
                 data: {
                     labels: labels,
                     datasets: [
-                        { label: 'Available', data: availableData, backgroundColor: '#28a745' },
-                        { label: 'Occupied', data: occupiedData, backgroundColor: '#dc3545' }
+                        { label: 'Available', data: availableData, backgroundColor: '#10b981' },
+                        { label: 'Occupied', data: occupiedData, backgroundColor: '#f43f5e' }
                     ]
                 },
                 options: {
@@ -1922,6 +2239,7 @@ async function saveGuest() {
                     body: JSON.stringify({ email: guestData.email })
                 });
                 const otpResult = await otpResponse.json();
+                hideLoading();
                 if (!otpResponse.ok) {
                     return showModal(otpResult.message || 'Failed to send OTP.');
                 }
@@ -1929,6 +2247,7 @@ async function saveGuest() {
                 promptForGuestOtp(guestData);
             } catch (error) {
                 console.error('Error sending check-in OTP:', error);
+                hideLoading();
                 showModal('A network error occurred while sending OTP.');
             }
         });
@@ -1945,6 +2264,7 @@ function promptForGuestOtp(guestData) {
         <input type="text" id="manualCheckinOtp" placeholder="Guest OTP" style="width: 100%; padding: 8px; margin: 8px 0; box-sizing: border-box;" maxlength="6">
         <div style="margin-top: 15px; display: flex; gap: 10px; justify-content: center;">
             <button class="confirm-btn" id="confirmCheckinWithOtpBtn">Confirm Check-in</button>
+            <button class="main-btn" style="background-color: #6c757d;" onclick="resendGuestCheckinOtp('${guestData.email}')">Resend OTP</button>
             <button class="cancel-btn" onclick="closeModal()">Cancel</button>
         </div>
     `;
@@ -1978,7 +2298,7 @@ async function updateGuestDetails(guestData) {
         });
         const result = await response.json();
         closeModal();
-        showModal(result.message || 'An error occurred.');
+        showToast(result.message || 'An error occurred.', response.ok ? 'success' : 'error');
         if (response.ok) {
             cancelGuestEdit();
             renderGuestsAndBookings();
@@ -2013,6 +2333,14 @@ async function generateBill() {
              return showModal(`Room details for ${roomNo} not found.`);
         }
 
+        // Fetch Hotel Settings for UPI ID
+        let upiId = null;
+        try {
+            const settingsRes = await fetch(`${API_BASE_URL}/hotel/settings?hotelName=${encodeURIComponent(getContextHotel())}`);
+            const settings = await settingsRes.json();
+            upiId = settings.UPI_ID;
+        } catch (e) { console.error("Failed to fetch UPI settings"); }
+
         // Fetch Food Orders
         let foodTotal = 0;
         let foodItemsHtml = '';
@@ -2044,7 +2372,9 @@ async function generateBill() {
             hotelName: getContextHotel(),
             foodAmount: foodTotal,
             discountAmount: discountAmount,
-            finalAmount: finalAmount
+            finalAmount: finalAmount,
+            upiId: upiId,
+            email: guestToCheckOut.EMAIL
         };
 
         const billResult = document.getElementById('billResult');
@@ -2061,6 +2391,21 @@ async function generateBill() {
                 <p><strong>Gross Amount:</strong> ₹${currentBillData.grossAmount.toFixed(2)}</p>
                 <p><strong>Discount (${room.DISCOUNT_PERCENT}%):</strong> - ₹${currentBillData.discountAmount.toFixed(2)}</p>
                 <h4>Final Amount: ₹${currentBillData.finalAmount.toFixed(2)}</h4>
+                
+                <div style="margin: 15px 0; padding: 10px; background: #f8f9fa; border-radius: 5px;">
+                    <label style="font-weight:bold; margin-right: 10px;">Payment Mode:</label>
+                    <label style="margin-right: 10px;"><input type="radio" name="paymentMode" value="Cash" checked onchange="togglePaymentQr(false)"> Cash</label>
+                    <label><input type="radio" name="paymentMode" value="UPI" onchange="togglePaymentQr(true)" ${!currentBillData.upiId ? 'disabled title="Owner has not set UPI ID"' : ''}> UPI</label>
+                    
+                    <div id="upiQrContainer" style="display:none; margin-top: 15px; text-align: center;">
+                        <div id="qrImageContainer"></div>
+                        <p style="font-size: 12px; color: #666; margin-top: 5px;">Scan to pay ₹${currentBillData.finalAmount.toFixed(2)}</p>
+                        <button id="verifyUpiBtn" class="main-btn" onclick="verifyUpiPayment()" style="margin-top:10px; background-color:#ffc107; color:#000;">
+                            <i class="fa-solid fa-check-circle"></i> Verify Payment
+                        </button>
+                    </div>
+                </div>
+
                 <div style="margin-top: 20px; display: flex; gap: 10px; flex-wrap: wrap;">
                     <button class="main-btn" onclick="checkoutGuest()"><i class="fa-solid fa-check"></i> Confirm & Checkout</button>
                     <button class="main-btn" style="background: #17a2b8;" onclick="printBill()"><i class="fa-solid fa-print"></i> Print Bill</button>
@@ -2072,34 +2417,100 @@ async function generateBill() {
     }
 }
 
-async function checkoutGuest() {
-    if (!currentBillData) return showModal('Please generate bill first.');
+window.togglePaymentQr = function(show) {
+    const container = document.getElementById('upiQrContainer');
+    const qrDiv = document.getElementById('qrImageContainer');
     
-    showModal(`Confirm checkout for ${currentBillData.guestName}?`, async () => {
+    if (show && currentBillData && currentBillData.upiId) {
+        const note = encodeURIComponent(`Room ${currentBillData.roomNumber}`);
+        const upiString = `upi://pay?pa=${currentBillData.upiId}&pn=${encodeURIComponent(currentBillData.hotelName)}&am=${currentBillData.finalAmount.toFixed(2)}&cu=INR&tn=${note}`;
+        const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=150x150&data=${encodeURIComponent(upiString)}`;
+        qrDiv.innerHTML = `<img src="${qrUrl}" style="border: 1px solid #ccc; padding: 5px; border-radius: 5px;">`;
+        
+        // Reset verify button state
+        const btn = document.getElementById('verifyUpiBtn');
+        if(btn) {
+            btn.innerHTML = '<i class="fa-solid fa-check-circle"></i> Verify Payment';
+            btn.style.backgroundColor = '#ffc107';
+            btn.style.color = '#000';
+            btn.disabled = false;
+        }
+        if(currentBillData) currentBillData.paymentVerified = false;
+
+        container.style.display = 'block';
+    } else {
+        container.style.display = 'none';
+        if(currentBillData) currentBillData.paymentVerified = false;
+    }
+}
+
+window.verifyUpiPayment = function() {
+    const btn = document.getElementById('verifyUpiBtn');
+    if(btn) {
+        btn.innerHTML = '<i class="fa-solid fa-check-double"></i> Verified';
+        btn.style.backgroundColor = '#28a745';
+        btn.style.color = 'white';
+        btn.disabled = true;
+        if(currentBillData) currentBillData.paymentVerified = true;
+        
+        // Auto checkout and print bill upon verification
+        checkoutGuest(true);
+    }
+};
+
+async function checkoutGuest(autoConfirm = false) {
+    if (!currentBillData) return showToast('Please generate bill first.', 'error');
+    
+    const paymentMode = document.querySelector('input[name="paymentMode"]:checked').value;
+
+    // Prevent checkout if UPI is selected but not verified
+    if (paymentMode === 'UPI' && !currentBillData.paymentVerified) {
+        return showToast('Please verify UPI payment before checkout.', 'error');
+    }
+
+    const processCheckout = async () => {
         try {
             const response = await fetch(`${API_BASE_URL}/billing/checkout`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ guestId: currentBillData.guestId, hotelName: currentBillData.hotelName })
+                body: JSON.stringify({ guestId: currentBillData.guestId, hotelName: currentBillData.hotelName, paymentMode })
             });
 
             const result = await response.json();
             if (response.ok) {
-                showModal(`${result.message}\nFinal Bill: ₹${result.finalAmount.toFixed(2)}`);
+                showToast(`${result.message} Final Bill: ₹${result.finalAmount.toFixed(2)}`, 'success');
+                
+                // Send Thank You Email
+                if (currentBillData.email) {
+                    sendThankYouEmail(currentBillData.email, currentBillData.guestName);
+                }
+
                 currentBillData = null;
                 document.getElementById('billRoomNo').value = '';
                 document.getElementById('billResult').innerHTML = '';
                 renderGuestsAndBookings();
                 renderHistory();
                 renderRooms();
+                
+                // Auto print if auto-confirmed (UPI flow)
+                if (autoConfirm) {
+                    // Small delay to ensure toast is seen
+                    setTimeout(() => printBill(), 500);
+                }
             } else {
-                showModal(result.message || 'Checkout failed.');
+                showToast(result.message || 'Checkout failed.', 'error');
             }
         } catch (error) {
             console.error('Checkout failed:', error);
-            showModal('An error occurred during checkout.');
+            showToast('An error occurred during checkout.', 'error');
         }
-    });
+    };
+
+    if (autoConfirm) {
+        await processCheckout();
+    } else {
+        showModal(`Confirm checkout for ${currentBillData.guestName}?`, processCheckout);
+    }
 }
 
 function printBill() {
@@ -2125,6 +2536,7 @@ function printBill() {
                 <div class="bill-row"><strong>Food Charges:</strong> ₹${(currentBillData.foodAmount || 0).toFixed(2)}</div>
                 <div class="bill-row"><strong>Gross Amount:</strong> ₹${currentBillData.grossAmount.toFixed(2)}</div>
                 <div class="bill-row"><strong>Discount:</strong> - ₹${currentBillData.discountAmount.toFixed(2)}</div>
+                <div class="bill-row"><strong>Payment Mode:</strong> ${document.querySelector('input[name="paymentMode"]:checked').value}</div>
                 <div class="bill-row bill-total">
                     <strong>Final Amount:</strong> <span>₹${currentBillData.finalAmount.toFixed(2)}</span>
                 </div>
@@ -2132,6 +2544,18 @@ function printBill() {
         </body></html>`);
     printWindow.document.close();
     printWindow.print();
+}
+
+async function sendThankYouEmail(email, name) {
+    try {
+        await fetch(`${API_BASE_URL}/guest/send-thank-you`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ email, name, hotelName: getContextHotel() })
+        });
+    } catch (e) {
+        console.error("Failed to send thank you email", e);
+    }
 }
 
 async function renderHistory(roomFilter = '') {
@@ -2157,7 +2581,7 @@ async function renderHistory(roomFilter = '') {
             </div>
             <table>
                 <thead>
-                    <tr><th>Guest</th><th>Room</th><th>Check-in</th><th>Check-out</th><th>Hours</th><th>Gross</th><th>Discount</th><th>Final</th></tr>
+                    <tr><th>Guest</th><th>Room</th><th>Check-in</th><th>Check-out</th><th>Hours</th><th>Gross</th><th>Discount</th><th>Final</th><th>Mode</th></tr>
                 </thead>
                 <tbody>
                     ${history.map(b => `
@@ -2170,6 +2594,7 @@ async function renderHistory(roomFilter = '') {
                             <td>₹${b.GROSS_AMOUNT.toFixed(2)}</td>
                             <td>₹${b.DISCOUNT_AMOUNT.toFixed(2)}</td>
                             <td>₹${b.FINAL_AMOUNT.toFixed(2)}</td>
+                            <td>${b.PAYMENT_MODE || 'Cash'}</td>
                         </tr>
                     `).join('')}
                 </tbody>
@@ -2289,7 +2714,7 @@ async function updateUserPermission(userId, permission, checkbox) {
             });
             const result = await response.json();
             if (!response.ok) {
-                showModal(result.message || 'Failed to update permission.');
+                showToast(result.message || 'Failed to update permission.', 'error');
                 checkbox.checked = !value; // Revert UI on failure
             }
         } catch (error) {
@@ -2352,7 +2777,7 @@ async function saveUserEdit(userId) {
             body: JSON.stringify(updatedData)
         });
         const result = await response.json();
-        showModal(result.message);
+        showToast(result.message, response.ok ? 'success' : 'error');
         if (response.ok) {
             renderAccessTable();
         }
@@ -2369,7 +2794,7 @@ async function deleteUser(userId, userName) {
                 method: 'DELETE'
             });
             const result = await response.json();
-            showModal(result.message);
+            showToast(result.message, response.ok ? 'success' : 'error');
             if (response.ok) renderAccessTable();
         } catch (error) {
             console.error('Error deleting user:', error);
@@ -2433,7 +2858,7 @@ async function createNewAccount() {
         const result = await response.json();
         if (response.ok) {
             closeModal();
-            showModal('Account created! Login details and reset link sent to email.');
+            showToast('Account created! Login details and reset link sent to email.', 'success');
             renderAccessTable();
         } else {
             showModal(result.message || 'Failed to create account.');
@@ -2451,9 +2876,9 @@ async function showUserDetails() {
         if (user.role === 'Owner') {
             reportsToName = 'Self (Owner)';
         } else {
-            const response = await fetch(`${API_BASE_URL}/hotel/owner?hotelName=${encodeURIComponent(getContextHotel())}`);
+            const response = await fetch(`${API_BASE_URL}/users/${user.username}`);
             const data = await response.json();
-            reportsToName = data.ownerName;
+            reportsToName = data.reportsToName || 'Owner';
         }
     } catch (e) {
         reportsToName = 'Owner';
@@ -2525,7 +2950,7 @@ async function saveProfilePicture() {
         const result = await response.json();
         if (response.ok) {
             await refreshUserProfile(); // Reload user data to update sidebar
-            showModal('Profile picture updated!');
+            showToast('Profile picture updated!', 'success');
         } else {
             showModal(result.message || 'Failed to update picture.');
         }
@@ -2601,6 +3026,10 @@ async function renderKitchenOrders(silent = false) {
             kitchenInitialized = true;
         }
         previousKitchenOrderIds = currentIds;
+
+        const currentJson = JSON.stringify(orders);
+        if (silent && currentJson === lastKitchenOrdersJson) return;
+        lastKitchenOrdersJson = currentJson;
 
         if (!silent) closeModal();
         if (orders.length === 0) {
@@ -2703,7 +3132,7 @@ async function toggleChefStock(id, checkbox) {
     } catch (e) {
         console.error(e);
         checkbox.checked = !isAvailable;
-        alert("Failed to update availability");
+        showToast("Failed to update availability", 'error');
     }
 }
 
@@ -2714,6 +3143,10 @@ async function renderDeliveryOrders(silent = false) {
         const response = await fetch(`${API_BASE_URL}/food-orders?status=Prepared`);
         const orders = await response.json();
         
+        const currentJson = JSON.stringify(orders);
+        if (silent && currentJson === lastDeliveryOrdersJson) return;
+        lastDeliveryOrdersJson = currentJson;
+
         if (!silent) closeModal();
         if (orders.length === 0) {
             container.innerHTML = '<p>No orders ready for delivery.</p>';
@@ -2830,7 +3263,7 @@ async function saveMaintenanceReport() {
     const description = document.getElementById('maintDesc').value.trim();
     const fileInput = document.getElementById('maintPhoto');
 
-    if (!roomNumber || !itemName || !description) return alert("Please fill all fields.");
+    if (!roomNumber || !itemName || !description) return showToast("Please fill all fields.", 'error');
 
     try {
         let photo = null;
@@ -2851,7 +3284,7 @@ async function saveMaintenanceReport() {
         });
         closeModal();
         renderMaintenance();
-    } catch (e) { alert("Failed to report issue."); }
+    } catch (e) { showToast("Failed to report issue.", 'error'); }
 }
 
 async function updateMaintenanceStatus(id, currentStatus) {
@@ -2863,7 +3296,7 @@ async function updateMaintenanceStatus(id, currentStatus) {
             body: JSON.stringify({ status: newStatus })
         });
         renderMaintenance();
-    } catch (e) { alert("Failed to update status."); }
+    } catch (e) { showToast("Failed to update status.", 'error'); }
 }
 
 // --- LOST & FOUND ---
@@ -2939,7 +3372,7 @@ async function saveLostFoundItem() {
         });
         closeModal();
         renderLostFound();
-    } catch (e) { alert("Failed to save item."); }
+    } catch (e) { showToast("Failed to save item.", 'error'); }
 }
 
 function markItemClaimed(id) {
@@ -2968,7 +3401,7 @@ async function submitClaim(id) {
         });
         closeModal();
         renderLostFound();
-    } catch (e) { alert("Failed to update status."); }
+    } catch (e) { showToast("Failed to update status.", 'error'); }
 }
 
 // --- SETTINGS ---
@@ -2991,7 +3424,36 @@ function renderSettings() {
                 <button class="delete-btn" onclick="resetSound()" style="margin-top:10px;">Reset to Default</button>
             </div>
         </div>
+        
+        ${user.role === 'Owner' ? `
+        <div class="bill-card" style="max-width: 500px; margin-top: 20px;">
+            <h3>Hotel Branding & Payment</h3>
+            <div style="margin: 15px 0;">
+                <label>Brand Color (Primary):</label>
+                <div style="display:flex; gap:10px; margin-top:5px;">
+                    <input type="color" id="settingsThemeColor" value="#4361ee" style="height:40px; width:60px; padding:0; border:none; cursor:pointer;">
+                    <button class="confirm-btn" onclick="saveThemeColor()">Apply Color</button>
+                </div>
+            </div>
+            <div style="margin: 15px 0;">
+                <label>UPI ID (for QR Code generation):</label>
+                <input type="text" id="settingsUpiId" placeholder="e.g. name@upi" style="width:100%; padding: 8px; margin-top: 5px; box-sizing: border-box;">
+                <button class="confirm-btn" onclick="saveUpiId()" style="margin-top:10px;">Save UPI ID</button>
+            </div>
+        </div>
+        ` : ''}
     `;
+    
+    if (user.role === 'Owner') {
+        // Fetch current UPI ID and Theme Color
+        fetch(`${API_BASE_URL}/hotel/settings?hotelName=${encodeURIComponent(getContextHotel())}`)
+            .then(res => res.json())
+            .then(data => {
+                if (data.UPI_ID) document.getElementById('settingsUpiId').value = data.UPI_ID;
+                if (data.THEME_COLOR) document.getElementById('settingsThemeColor').value = data.THEME_COLOR;
+            })
+            .catch(console.error);
+    }
 }
 
 window.updateVolume = async function(val) {
@@ -3027,7 +3489,7 @@ window.saveCustomSound = function(input) {
                 if (localStorage.getItem('hmsCurrentUser')) localStorage.setItem('hmsCurrentUser', JSON.stringify(user));
                 else sessionStorage.setItem('hmsCurrentUser', JSON.stringify(user));
                 closeModal();
-                alert("Sound updated!");
+                showToast("Sound updated!", 'success');
             } catch(err) { closeModal(); alert("Failed to save sound."); }
         };
         reader.readAsDataURL(input.files[0]);
@@ -3045,7 +3507,40 @@ window.resetSound = async function() {
     if (localStorage.getItem('hmsCurrentUser')) localStorage.setItem('hmsCurrentUser', JSON.stringify(user));
     else sessionStorage.setItem('hmsCurrentUser', JSON.stringify(user));
     loadNotificationSettings();
-    alert("Sound reset to default.");
+    showToast("Sound reset to default.", 'info');
+};
+
+window.saveUpiId = async function() {
+    const upiId = document.getElementById('settingsUpiId').value.trim();
+    if (upiId && !upiId.includes('@')) {
+        return showModal("Invalid UPI ID format. It should be like username@bank");
+    }
+
+    try {
+        showLoading("Saving UPI ID...");
+        await fetch(`${API_BASE_URL}/users/${user.userId}`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ upiId: upiId })
+        });
+        closeModal();
+        showToast("UPI ID saved successfully.", 'success');
+    } catch(e) { closeModal(); showModal("Failed to save UPI ID."); }
+};
+
+window.saveThemeColor = async function() {
+    const color = document.getElementById('settingsThemeColor').value;
+    try {
+        showLoading("Saving brand color...");
+        await fetch(`${API_BASE_URL}/users/${user.userId}`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ themeColor: color })
+        });
+        applyThemeColor(color);
+        closeModal();
+        showToast("Brand color updated successfully!", "success");
+    } catch(e) { closeModal(); showModal("Failed to save color."); }
 };
 
 // --- MENU MANAGEMENT (OWNER ONLY) ---
@@ -3166,7 +3661,7 @@ async function toggleMenuAvailability(id, checkbox) {
     } catch (e) {
         console.error(e);
         checkbox.checked = !isAvailable; // Revert UI on failure
-        alert("Failed to update availability");
+        showToast("Failed to update availability", 'error');
     }
 }
 
@@ -3222,7 +3717,7 @@ async function deleteSelectedMenuItems() {
             selectedMenuIds.clear();
             renderMenuManagement();
         } catch (e) {
-            alert("Failed to delete items");
+            showToast("Failed to delete items", 'error');
         }
     });
 }
@@ -3401,7 +3896,7 @@ async function saveMenuItem() {
         closeModal();
         renderMenuManagement();
     } catch (e) {
-        alert("Failed to add item");
+        showToast("Failed to add item", 'error');
     }
 }
 
@@ -3410,7 +3905,7 @@ async function deleteMenuItem(id) {
     try {
         await fetch(`${API_BASE_URL}/menu/${id}`, { method: 'DELETE' });
         renderMenuManagement();
-    } catch (e) { alert("Failed to delete"); }
+    } catch (e) { showToast("Failed to delete", 'error'); }
 }
 
 // --- REPORTS (OWNER ONLY) ---
@@ -3454,27 +3949,27 @@ async function renderReports(viewType = 'daily') {
                 </div>
             </div>
 
-            <div style="display: flex; gap: 10px; align-items: center; background: #fff; padding: 15px; border-radius: 8px; box-shadow: 0 2px 5px rgba(0,0,0,0.05); flex-wrap: wrap;">
+            <div style="display: flex; gap: 10px; align-items: center; background: var(--surface-color); color: var(--text-color); padding: 15px; border-radius: 8px; box-shadow: 0 2px 5px rgba(0,0,0,0.05); flex-wrap: wrap;">
                 <label style="font-weight:500;">From:</label>
-                <input type="date" id="reportStartDate" value="${startVal}" style="padding: 8px; border: 1px solid #ccc; border-radius: 4px;">
+                <input type="date" id="reportStartDate" value="${startVal}" style="padding: 8px; border: 1px solid var(--border-color); background: var(--surface-color); color: var(--text-color); border-radius: 4px;">
                 <label style="font-weight:500;">To:</label>
-                <input type="date" id="reportEndDate" value="${endVal}" style="padding: 8px; border: 1px solid #ccc; border-radius: 4px;">
+                <input type="date" id="reportEndDate" value="${endVal}" style="padding: 8px; border: 1px solid var(--border-color); background: var(--surface-color); color: var(--text-color); border-radius: 4px;">
                 <button class="confirm-btn" onclick="renderReports('${viewType}')"><i class="fa-solid fa-filter"></i> Filter</button>
             </div>
 
-            <div style="display: flex; gap: 20px; justify-content: space-around; background: #fff; padding: 20px; border-radius: 8px; box-shadow: 0 2px 5px rgba(0,0,0,0.05);">
+            <div style="display: flex; gap: 20px; justify-content: space-around; background: var(--surface-color); color: var(--text-color); padding: 20px; border-radius: 8px; box-shadow: 0 2px 5px rgba(0,0,0,0.05);">
                 <div style="text-align: center;">
-                    <h4 style="margin:0; color: #666; font-size: 14px; text-transform: uppercase; letter-spacing: 1px;">Total Revenue</h4>
+                    <h4 style="margin:0; color: var(--text-muted); font-size: 14px; text-transform: uppercase; letter-spacing: 1px;">Total Revenue</h4>
                     <h2 style="margin:5px 0; color: #28a745; font-size: 28px;" id="reportTotalRevenue">₹0</h2>
                 </div>
-                <div style="text-align: center; border-left: 1px solid #eee; padding-left: 20px;">
-                    <h4 style="margin:0; color: #666; font-size: 14px; text-transform: uppercase; letter-spacing: 1px;">Transactions</h4>
+                <div style="text-align: center; border-left: 1px solid var(--border-color); padding-left: 20px;">
+                    <h4 style="margin:0; color: var(--text-muted); font-size: 14px; text-transform: uppercase; letter-spacing: 1px;">Transactions</h4>
                     <h2 style="margin:5px 0; color: #007bff; font-size: 28px;" id="reportTotalCount">0</h2>
                 </div>
             </div>
         </div>
 
-        <div style="background: white; padding: 20px; border-radius: 8px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); height: 400px; position: relative;">
+        <div style="background: var(--surface-color); padding: 20px; border-radius: 8px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); height: 400px; position: relative;">
             <canvas id="revenueChart"></canvas>
         </div>
     `;
@@ -3546,8 +4041,8 @@ async function renderReports(viewType = 'daily') {
                 datasets: [{
                     label: `Revenue (${viewType})`,
                     data: data,
-                    backgroundColor: 'rgba(0, 123, 255, 0.6)',
-                    borderColor: 'rgba(0, 123, 255, 1)',
+                    backgroundColor: 'rgba(99, 102, 241, 0.6)',
+                    borderColor: 'rgba(99, 102, 241, 1)',
                     borderWidth: 1,
                     borderRadius: 4
                 }]
@@ -3671,6 +4166,18 @@ document.addEventListener('DOMContentLoaded', async () => {
                 divFeatures.innerHTML = `<h2>Hotel Features</h2><div id="hotelFeaturesList"></div>`;
                 document.querySelector('.main-content').appendChild(divFeatures);
 
+                // Inject Payroll Tab for Owner
+                const liPayroll = document.createElement('li');
+                liPayroll.innerHTML = '<i class="fa-solid fa-money-check-dollar"></i> Payroll';
+                liPayroll.onclick = function() { openTab('payrollContainer', this); renderPayroll(); };
+                sidebarList.insertBefore(liPayroll, sidebarList.lastElementChild);
+
+                const divPayroll = document.createElement('div');
+                divPayroll.id = 'payrollContainer';
+                divPayroll.className = 'tab-content';
+                divPayroll.innerHTML = `<h2>Employee Payroll</h2><div id="payrollList"></div>`;
+                document.querySelector('.main-content').appendChild(divPayroll);
+
                 // Add styles for pagination buttons
                 const style = document.createElement('style');
                 style.innerHTML = `
@@ -3690,17 +4197,21 @@ document.addEventListener('DOMContentLoaded', async () => {
         }
 
         // --- AUTO REFRESH BOOKINGS ---
-        // Poll every 10 seconds to update the booking list automatically
+        // Poll every 2 seconds to update the booking list automatically
         setInterval(() => {
             // Only refresh if the booking table is visible or we are on the dashboard
             if (document.getElementById('onlineBookingTable')) {
-                renderOnlineBookings();
+                renderOnlineBookings(true);
             }
-        }, 10000);
+        }, 2000);
 
         loadPromises.push(refreshUserProfile());
         await Promise.all(loadPromises);
         applyUserSettings(); // Apply settings after profile refresh
+        
+        // Fetch and apply hotel-wide settings (Theme Color & UPI check)
+        fetchHotelSettings();
+
     } catch (error) {
         console.error("Error initializing dashboard:", error);
     } finally {
@@ -3776,6 +4287,25 @@ document.addEventListener('DOMContentLoaded', async () => {
     });
 });
 
+async function fetchHotelSettings() {
+    try {
+        const [settingsRes, uiRes] = await Promise.all([
+            fetch(`${API_BASE_URL}/hotel/settings?hotelName=${encodeURIComponent(getContextHotel())}`),
+            fetch(`${API_BASE_URL}/ui-settings?hotelName=${encodeURIComponent(getContextHotel())}`)
+        ]);
+        if (settingsRes.ok) {
+            const settings = await settingsRes.json();
+            if (settings.THEME_COLOR) {
+                applyThemeColor(settings.THEME_COLOR);
+            }
+        }
+        if (uiRes.ok) {
+            const uiSettings = await uiRes.json();
+            applyCustomTheme(uiSettings);
+        }
+    } catch (e) { console.error("Failed to load hotel settings", e); }
+}
+
 function applyUserSettings() {
     if (user.isDarkMode) document.body.classList.add('dark-mode');
     else document.body.classList.remove('dark-mode');
@@ -3802,8 +4332,8 @@ async function renderSystemHealth() {
         const data = await response.json();
         closeModal();
         
-        const dbColor = data.dbStatus === 'Connected' ? '#28a745' : '#dc3545';
-        const apiColor = '#28a745'; 
+        const dbColor = data.dbStatus === 'Connected' ? '#2a9d8f' : '#ef233c';
+        const apiColor = '#2a9d8f'; 
 
         let retryBtn = '';
         if (data.dbStatus !== 'Connected') {
@@ -3811,8 +4341,8 @@ async function renderSystemHealth() {
         }
 
         const apiListHtml = (data.subsystems || []).map(sub => `
-            <div style="display: flex; justify-content: space-between; padding: 10px; border-bottom: 1px solid #eee;">
-                <span style="font-weight:500;">${sub.name}</span>
+            <div class="api-item" style="display: flex; justify-content: space-between; padding: 10px; border-bottom: 1px solid #eee;">
+                <span class="api-name" style="font-weight:500;">${sub.name}</span>
                 <div style="display:flex; gap:10px; align-items:center;">
                     <span style="font-weight: bold; color: ${sub.status === 'Operational' ? '#28a745' : (sub.status === 'Degraded' ? '#ffc107' : '#dc3545')}">
                         ${sub.status === 'Operational' ? '<i class="fa-solid fa-check-circle"></i> Operational' : '<i class="fa-solid fa-circle-xmark"></i> ' + sub.status}
@@ -3827,7 +4357,7 @@ async function renderSystemHealth() {
         `).join('');
 
         container.innerHTML = `
-            <div style="display: flex; gap: 20px; flex-wrap: wrap; margin-bottom: 20px;">
+            <div style="display: flex; gap: 20px; flex-wrap: wrap; margin-bottom: 20px; color: var(--text-color);">
                 <div class="bill-card" style="flex: 1; min-width: 250px; border-left: 5px solid ${apiColor};">
                     <h3>API Server</h3>
                     <p><strong>Status:</strong> <span style="color:${apiColor}; font-weight:bold;">${data.apiStatus}</span></p>
@@ -3842,7 +4372,11 @@ async function renderSystemHealth() {
             </div>
             <div class="bill-card" style="border-left: 5px solid #17a2b8;">
                 <h3>API Health Check List</h3>
-                <div style="margin-top: 10px;">
+                <div style="margin-top: 10px; display: flex; gap: 10px; margin-bottom: 10px;">
+                    <input type="text" id="apiSearchInput" placeholder="Search APIs..." style="padding: 8px; border: 1px solid var(--border-color); background: var(--surface-color); color: var(--text-color); border-radius: 4px; flex: 1;" onkeyup="filterSystemHealthAPIs()">
+                    <button class="main-btn" onclick="filterSystemHealthAPIs()">Search for APIs</button>
+                </div>
+                <div id="apiHealthList" style="margin-top: 10px;">
                     ${apiListHtml}
                 </div>
             </div>
@@ -3852,7 +4386,7 @@ async function renderSystemHealth() {
                 <div style="display: flex; gap: 20px; flex-wrap: wrap; margin-top: 15px;">
                     
                     <!-- API Control -->
-                    <div style="flex: 1; min-width: 200px; border: 1px solid #eee; padding: 15px; border-radius: 8px;">
+                    <div style="flex: 1; min-width: 200px; border: 1px solid var(--border-color); padding: 15px; border-radius: 8px;">
                         <h4>APIs</h4>
                         <p>Status: <span style="font-weight:bold; color:${controlStatus.api ? 'green' : 'red'}">${controlStatus.api ? 'Running' : 'Stopped'}</span></p>
                         <div style="display:flex; gap:10px;">
@@ -3863,7 +4397,7 @@ async function renderSystemHealth() {
                     </div>
 
                     <!-- DB Control -->
-                    <div style="flex: 1; min-width: 200px; border: 1px solid #eee; padding: 15px; border-radius: 8px;">
+                    <div style="flex: 1; min-width: 200px; border: 1px solid var(--border-color); padding: 15px; border-radius: 8px;">
                         <h4>Database</h4>
                         <p>Status: <span style="font-weight:bold; color:${controlStatus.db ? 'green' : 'red'}">${controlStatus.db ? 'Connected' : 'Disconnected'}</span></p>
                         <div style="display:flex; gap:10px;">
@@ -3874,7 +4408,7 @@ async function renderSystemHealth() {
                     </div>
 
                     <!-- Server Control -->
-                    <div style="flex: 1; min-width: 200px; border: 1px solid #eee; padding: 15px; border-radius: 8px;">
+                    <div style="flex: 1; min-width: 200px; border: 1px solid var(--border-color); padding: 15px; border-radius: 8px;">
                         <h4>Server</h4>
                         <p>Status: <span style="font-weight:bold; color:green">Running</span></p>
                         <div style="display:flex; gap:10px;">
@@ -3884,7 +4418,7 @@ async function renderSystemHealth() {
                                 <i class="fa-solid fa-rotate-right"></i> Restart
                             </button>
                         </div>
-                        <p style="font-size:11px; color:#666; margin-top:5px;">* Manual restart required if stopped.</p>
+                        <p style="font-size:11px; color:var(--text-muted); margin-top:5px;">* Manual restart required if stopped.</p>
                     </div>
 
                 </div>
@@ -3894,6 +4428,23 @@ async function renderSystemHealth() {
         closeModal();
         console.error("System Health Check Failed:", e);
         container.innerHTML = `<p style="color:red">Failed to fetch system health. API might be down.<br><small>${e.message}</small></p>`;
+    }
+}
+
+window.filterSystemHealthAPIs = function() {
+    const input = document.getElementById('apiSearchInput');
+    const filter = input.value.toLowerCase();
+    const list = document.getElementById('apiHealthList');
+    const items = list.getElementsByClassName('api-item');
+
+    for (let i = 0; i < items.length; i++) {
+        const nameSpan = items[i].getElementsByClassName('api-name')[0];
+        const txtValue = nameSpan.textContent || nameSpan.innerText;
+        if (txtValue.toLowerCase().indexOf(filter) > -1) {
+            items[i].style.display = "";
+        } else {
+            items[i].style.display = "none";
+        }
     }
 }
 
@@ -3911,7 +4462,7 @@ async function controlSystem(component, action) {
         });
         const result = await response.json();
         closeModal();
-        showModal(result.message);
+        showToast(result.message, response.ok ? 'success' : 'error');
         if (component !== 'server') {
             if (component === 'api' && action === 'restart') {
                 setTimeout(renderSystemHealth, 2000);
@@ -3948,7 +4499,7 @@ async function controlSubsystem(subsystem, action) {
         });
         const result = await response.json();
         closeModal();
-        showModal(result.message);
+        showToast(result.message, response.ok ? 'success' : 'error');
         if (action === 'restart') {
             setTimeout(renderSystemHealth, 2000);
         } else {
@@ -3995,7 +4546,7 @@ async function downloadBackup() {
         closeModal();
     } catch (e) {
         closeModal();
-        showModal("Backup failed.");
+        showToast("Backup failed.", 'error');
     }
 }
 
@@ -4018,7 +4569,7 @@ async function restoreDatabase() {
                 });
                 const result = await response.json();
                 closeModal();
-                showModal(result.message);
+                showToast(result.message, response.ok ? 'success' : 'error');
             });
         } catch (err) {
             showModal("Invalid backup file.");
@@ -4034,7 +4585,7 @@ async function retryDbConnection() {
         const result = await response.json();
         closeModal();
         if (response.ok) {
-            showModal(result.message);
+            showToast(result.message, 'success');
             renderSystemHealth();
         } else {
             showModal(result.message || "Reconnection failed.");
@@ -4083,7 +4634,7 @@ async function sendBroadcast() {
         });
         const result = await response.json();
         closeModal();
-        showModal(result.message);
+        showToast(result.message, response.ok ? 'success' : 'error');
     } catch (e) {
         closeModal();
         showModal('Failed to send broadcast.');
@@ -4118,7 +4669,7 @@ async function sendOwnerBroadcast() {
         });
         const result = await response.json();
         closeModal();
-        showModal(result.message);
+        showToast(result.message, response.ok ? 'success' : 'error');
     } catch (e) {
         closeModal();
         showModal('Failed to send broadcast.');
@@ -4202,6 +4753,158 @@ window.markBroadcastRead = async function(btn, signature) {
     if (badge) badge.remove(); // Remove sidebar badge
 };
 
+// --- PAYROLL MANAGEMENT ---
+async function renderPayroll() {
+    const container = document.getElementById('payrollList');
+    if (!container) return;
+
+    setupHeaderAction('payrollList', 'payAllBtn', 'Pay All Salaries', () => confirmPayAllSalaries());
+
+    showLoading("Loading payroll data...");
+    try {
+        const response = await fetch(`${API_BASE_URL}/admin/employees-payroll?hotelName=${encodeURIComponent(getContextHotel())}`);
+        const employees = await response.json();
+        closeModal();
+
+        if (employees.length === 0) {
+            container.innerHTML = '<p>No employees found.</p>';
+            return;
+        }
+
+        // Store employees globally for modal access if needed, or pass data directly
+        window.currentPayrollData = employees;
+
+        container.innerHTML = `
+            <table class="styled-table">
+                <thead>
+                    <tr>
+                        <th>Employee</th>
+                        <th>Role</th>
+                        <th>Reports To</th>
+                        <th>Bank Details</th>
+                        <th>Salary</th>
+                        <th>Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    ${employees.map(e => {
+                        const empJson = JSON.stringify(e).replace(/'/g, "&#39;");
+                        return `
+                        <tr>
+                            <td>
+                                <div style="font-weight:bold;">${e.FULL_NAME}</div>
+                                <div style="font-size:11px; color:#666;">${e.EMAIL || ''}</div>
+                            </td>
+                            <td>${e.ROLE}</td>
+                            <td>${e.REPORTS_TO_NAME || '-'}</td>
+                            <td style="font-size:12px;">
+                                ${e.BANK_ACCOUNT ? `Ac: ${e.BANK_ACCOUNT}<br>IFSC: ${e.IFSC}` : '<span style="color:red">Not Set</span>'}
+                            </td>
+                            <td style="font-weight:bold; color:#28a745;">₹${(e.SALARY || 0).toLocaleString()}</td>
+                            <td>
+                                <button class="edit-btn" onclick='openPayrollModal(${empJson})' title="Edit Details"><i class="fa-solid fa-pen"></i></button>
+                                <button class="confirm-btn" onclick="confirmPaySalary(${e.USER_ID}, '${e.FULL_NAME.replace(/'/g, "\\'")}', ${e.SALARY || 0})" title="Send Salary" ${!e.SALARY || !e.BANK_ACCOUNT ? 'disabled style="opacity:0.5; cursor:not-allowed;"' : ''}><i class="fa-solid fa-paper-plane"></i></button>
+                            </td>
+                        </tr>
+                    `}).join('')}
+                </tbody>
+            </table>
+        `;
+    } catch (e) {
+        closeModal();
+        container.innerHTML = '<p>Error loading payroll data.</p>';
+    }
+}
+
+function openPayrollModal(emp) {
+    const modal = document.getElementById('actionModal');
+    const modalBox = document.getElementById('modalBox');
+    
+    // Generate options for Reports To (filter out self)
+    const potentialManagers = window.currentPayrollData ? window.currentPayrollData.filter(p => p.USER_ID !== emp.USER_ID) : [];
+    const managerOptions = potentialManagers.map(m => `<option value="${m.USER_ID}" ${emp.REPORTS_TO === m.USER_ID ? 'selected' : ''}>${m.FULL_NAME} (${m.ROLE})</option>`).join('');
+
+    modalBox.innerHTML = `
+        <h3 style="margin-top:0;">Edit Payroll Details: ${emp.FULL_NAME}</h3>
+        <label style="display:block; text-align:left; font-size:12px; margin-top:5px;">Monthly Salary (₹)</label>
+        <input type="number" id="paySalaryInput" value="${emp.SALARY || ''}" placeholder="0" style="width: 100%; padding: 8px; margin: 5px 0 10px 0; box-sizing: border-box;">
+        
+        <label style="display:block; text-align:left; font-size:12px; margin-top:5px;">Bank Account Number</label>
+        <input type="text" id="payBankInput" value="${emp.BANK_ACCOUNT || ''}" placeholder="Account No." style="width: 100%; padding: 8px; margin: 5px 0 10px 0; box-sizing: border-box;">
+        
+        <label style="display:block; text-align:left; font-size:12px; margin-top:5px;">IFSC Code</label>
+        <input type="text" id="payIfscInput" value="${emp.IFSC || ''}" placeholder="IFSC" style="width: 100%; padding: 8px; margin: 5px 0 10px 0; box-sizing: border-box;">
+        
+        <label style="display:block; text-align:left; font-size:12px; margin-top:5px;">Reports To</label>
+        <select id="payReportsToInput" style="width: 100%; padding: 8px; margin: 5px 0 10px 0; box-sizing: border-box;">
+            <option value="">-- Select Manager --</option>
+            <option value="${user.userId}" ${emp.REPORTS_TO === user.userId ? 'selected' : ''}>Self (Owner)</option>
+            ${managerOptions}
+        </select>
+
+        <div style="margin-top: 15px; display: flex; gap: 10px; justify-content: center;">
+            <button class="confirm-btn" onclick="savePayrollDetails(${emp.USER_ID})">Save</button>
+            <button class="cancel-btn" onclick="closeModal()">Cancel</button>
+        </div>
+    `;
+    modal.style.display = 'flex';
+}
+
+async function savePayrollDetails(userId) {
+    const salary = document.getElementById('paySalaryInput').value;
+    const bankAccount = document.getElementById('payBankInput').value.trim();
+    const ifsc = document.getElementById('payIfscInput').value.trim();
+    const reportsTo = document.getElementById('payReportsToInput').value;
+
+    try {
+        showLoading("Saving details...");
+        const response = await fetch(`${API_BASE_URL}/admin/employees-payroll`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ userId, salary, bankAccount, ifsc, reportsTo })
+        });
+        const result = await response.json();
+        closeModal();
+        showToast(result.message, response.ok ? 'success' : 'error');
+        if (response.ok) renderPayroll();
+    } catch (e) {
+        closeModal();
+        showToast("Failed to save details.", 'error');
+    }
+}
+
+function confirmPaySalary(userId, name, amount) {
+    showModal(`Confirm salary payment of ₹${amount} to ${name}?`, () => processPayment([userId]));
+}
+
+function confirmPayAllSalaries() {
+    if (!window.currentPayrollData) return;
+    const eligible = window.currentPayrollData.filter(e => e.SALARY > 0 && e.BANK_ACCOUNT);
+    if (eligible.length === 0) return showModal("No employees have valid salary and bank details set.");
+    
+    const total = eligible.reduce((sum, e) => sum + e.SALARY, 0);
+    const ids = eligible.map(e => e.USER_ID);
+    
+    showModal(`Pay total ₹${total.toLocaleString()} to ${ids.length} employees?`, () => processPayment(ids));
+}
+
+async function processPayment(userIds) {
+    try {
+        showLoading("Processing payment...");
+        const response = await fetch(`${API_BASE_URL}/admin/pay-salary`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ userIds, hotelName: getContextHotel() })
+        });
+        const result = await response.json();
+        closeModal();
+        showToast(result.message, response.ok ? 'success' : 'error');
+    } catch (e) {
+        closeModal();
+        showToast("Payment processing failed.", 'error');
+    }
+}
+
 // --- HOTEL FEATURES MANAGEMENT ---
 async function renderHotelFeatures() {
     const container = document.getElementById('hotelFeaturesList');
@@ -4282,7 +4985,7 @@ async function saveHotelFeature() {
         });
         closeModal();
         renderHotelFeatures();
-    } catch (e) { alert("Failed to add feature."); }
+    } catch (e) { showToast("Failed to add feature.", 'error'); }
 }
 
 async function deleteHotelFeature(id) {
@@ -4290,7 +4993,262 @@ async function deleteHotelFeature(id) {
     try {
         await fetch(`${API_BASE_URL}/hotel-features/${id}`, { method: 'DELETE' });
         renderHotelFeatures();
-    } catch (e) { alert("Failed to delete feature."); }
+    } catch (e) { showToast("Failed to delete feature.", 'error'); }
+}
+
+function renderColorInput(label, id, value) {
+    return `
+        <div style="margin-bottom:10px;">
+            <label style="display:block; font-size:12px; margin-bottom:3px;">${label}</label>
+            <div style="display:flex; gap:10px;">
+                <input type="color" id="${id}" value="${value}" oninput="updateDesignPreview()" style="height:35px; width:50px; padding:0; border:none; cursor:pointer;">
+                <input type="text" value="${value}" oninput="document.getElementById('${id}').value = this.value; updateDesignPreview();" style="flex:1; padding:5px; border:1px solid #ddd; border-radius:4px;">
+            </div>
+        </div>
+    `;
+}
+
+window.switchDesignTab = function(tab) {
+    document.querySelectorAll('.design-section').forEach(el => el.style.display = 'none');
+    document.getElementById(`design_${tab}`).style.display = 'block';
+    
+    // Update Preview Mode
+    window.previewMode = tab;
+    updateDesignPreview();
+}
+
+window.updateDesignPreview = function() {
+    const mode = window.previewMode || 'light';
+    const isDark = mode === 'dark';
+    
+    // Get values based on mode
+    const getVal = (id) => document.getElementById(id) ? document.getElementById(id).value : '';
+    
+    const container = document.getElementById('previewContainer');
+    const sidebar = document.getElementById('p_sidebar');
+    const main = document.getElementById('p_main');
+    const card = document.getElementById('p_card');
+    const btn = document.getElementById('p_btn');
+    const activeTab = document.getElementById('p_active_tab');
+
+    if (mode === 'guest') {
+        // Guest Preview
+        const guestBg = getVal('guestLoginBg');
+        container.style.background = guestBg;
+        container.innerHTML = `
+            <div style="display:flex; align-items:center; justify-content:center; height:100%;">
+                <div style="background:white; padding:20px; border-radius:8px; box-shadow:0 4px 10px rgba(0,0,0,0.1); width:200px; text-align:center;">
+                    <div style="height:40px; width:40px; background:#ccc; border-radius:50%; margin:0 auto 10px;"></div>
+                    <div style="height:10px; background:#eee; margin-bottom:5px;"></div>
+                    <div style="height:10px; background:#eee; margin-bottom:15px;"></div>
+                    <div style="height:30px; background:${getVal('primaryColor')}; border-radius:4px;"></div>
+                </div>
+            </div>
+        `;
+        return;
+    }
+
+    // Restore Dashboard HTML if coming from Guest
+    if (!document.getElementById('p_sidebar')) {
+        container.innerHTML = `
+            <div style="flex:1; display:flex; overflow:hidden;">
+                <div id="p_sidebar" style="width:150px; padding:10px; border-right:1px solid rgba(0,0,0,0.1); display:flex; flex-direction:column; gap:10px;">
+                    <div style="height:20px; width:80%; background:rgba(128,128,128,0.2); border-radius:4px;"></div>
+                    <div style="height:30px; width:100%; background:rgba(128,128,128,0.1); border-radius:4px;"></div>
+                    <div id="p_active_tab" style="height:30px; width:100%; border-radius:4px; display:flex; align-items:center; padding-left:10px; font-size:12px;">Active Tab</div>
+                    <div style="height:30px; width:100%; background:rgba(128,128,128,0.1); border-radius:4px;"></div>
+                </div>
+                <div id="p_main" style="flex:1; padding:20px;">
+                    <div style="margin-bottom:15px; font-size:18px; font-weight:bold;">Dashboard</div>
+                    <div id="p_card" style="padding:20px; border-radius:8px; box-shadow:0 2px 5px rgba(0,0,0,0.1);">
+                        <h4 style="margin-top:0;">Card Title</h4>
+                        <p style="font-size:12px; opacity:0.8;">This is how your content will look.</p>
+                        <button id="p_btn" style="padding:8px 15px; border:none; border-radius:4px; cursor:pointer; color:white;">Primary Button</button>
+                    </div>
+                </div>
+            </div>
+        `;
+        // Re-fetch references
+        return updateDesignPreview();
+    }
+
+    const p_bg = isDark ? getVal('dark_bgColor') : getVal('bgColor');
+    const p_surface = isDark ? getVal('dark_surfaceColor') : getVal('surfaceColor');
+    const p_text = isDark ? getVal('dark_textColor') : getVal('textColor');
+    const p_primary = isDark ? getVal('dark_primaryColor') : getVal('primaryColor');
+    const p_sidebarBg = isDark ? getVal('dark_sidebarBg') : getVal('sidebarBg');
+    const p_sidebarText = isDark ? getVal('dark_sidebarText') : getVal('sidebarText');
+
+    container.style.background = p_bg;
+    container.style.color = p_text;
+    
+    sidebar.style.background = p_sidebarBg;
+    sidebar.style.color = p_text; 
+    sidebar.style.borderColor = isDark ? '#333' : '#eee';
+    
+    activeTab.style.background = isDark ? '#333' : '#e4e8f1'; 
+    activeTab.style.color = p_sidebarText;
+    activeTab.style.fontWeight = 'bold';
+
+    main.style.background = p_bg;
+    
+    card.style.background = p_surface;
+    card.style.color = p_text;
+    
+    btn.style.background = p_primary;
+}
+
+async function renderUIDesign() {
+    const container = document.getElementById('uiDesignContent');
+    showLoading("Loading UI settings...");
+    try {
+        const response = await fetch(`${API_BASE_URL}/ui-settings?hotelName=${encodeURIComponent(getContextHotel())}`);
+        const settings = await response.json();
+        closeModal();
+
+        const s = {
+            // Light Mode Defaults
+            primaryColor: settings.primaryColor || '#6366f1',
+            secondaryColor: settings.secondaryColor || '#64748b',
+            sidebarBg: settings.sidebarBg || '#faf6f6',
+            sidebarText: settings.sidebarText || '#4338ca',
+            bgColor: settings.bgColor || '#f3f4f6',
+            surfaceColor: settings.surfaceColor || '#ffffff',
+            textColor: settings.textColor || '#1f2937',
+            
+            // Dark Mode Defaults
+            dark_primaryColor: settings.dark_primaryColor || '#818cf8',
+            dark_secondaryColor: settings.dark_secondaryColor || '#64748b',
+            dark_sidebarBg: settings.dark_sidebarBg || '#000000',
+            dark_sidebarText: settings.dark_sidebarText || '#f8f7f7',
+            dark_bgColor: settings.dark_bgColor || '#1a1a1a',
+            dark_surfaceColor: settings.dark_surfaceColor || '#000000',
+            dark_textColor: settings.dark_textColor || '#faf8f8',
+            
+            // Guest Page
+            guestLoginBg: settings.guestLoginBg || '#ffffff'
+        };
+
+        window.currentUISettings = s; // Store for preview updates
+
+        container.innerHTML = `
+            <div style="display:flex; gap:20px; flex-wrap:wrap;">
+                <!-- Controls -->
+                <div class="bill-card" style="flex:1; min-width:300px;">
+                    <h3>Theme Customization</h3>
+                    <div style="margin-bottom:15px; border-bottom:1px solid #eee; padding-bottom:10px;">
+                        <button class="main-btn" onclick="switchDesignTab('light')" id="tab_light" style="margin-right:5px;">Light Mode</button>
+                        <button class="main-btn" onclick="switchDesignTab('dark')" id="tab_dark" style="background:#444; margin-right:5px;">Dark Mode</button>
+                        <button class="main-btn" onclick="switchDesignTab('guest')" id="tab_guest" style="background:#17a2b8;">Guest Page</button>
+                    </div>
+
+                    <div id="design_light" class="design-section">
+                        <h4>Light Mode Colors</h4>
+                        ${renderColorInput('Primary Color', 'primaryColor', s.primaryColor)}
+                        ${renderColorInput('Secondary Color', 'secondaryColor', s.secondaryColor)}
+                        ${renderColorInput('Background', 'bgColor', s.bgColor)}
+                        ${renderColorInput('Surface (Card)', 'surfaceColor', s.surfaceColor)}
+                        ${renderColorInput('Text Color', 'textColor', s.textColor)}
+                        ${renderColorInput('Sidebar BG', 'sidebarBg', s.sidebarBg)}
+                        ${renderColorInput('Sidebar Active Text', 'sidebarText', s.sidebarText)}
+                    </div>
+
+                    <div id="design_dark" class="design-section" style="display:none;">
+                        <h4>Dark Mode Colors</h4>
+                        ${renderColorInput('Primary Color', 'dark_primaryColor', s.dark_primaryColor)}
+                        ${renderColorInput('Secondary Color', 'dark_secondaryColor', s.dark_secondaryColor)}
+                        ${renderColorInput('Background', 'dark_bgColor', s.dark_bgColor)}
+                        ${renderColorInput('Surface (Card)', 'dark_surfaceColor', s.dark_surfaceColor)}
+                        ${renderColorInput('Text Color', 'dark_textColor', s.dark_textColor)}
+                        ${renderColorInput('Sidebar BG', 'dark_sidebarBg', s.dark_sidebarBg)}
+                        ${renderColorInput('Sidebar Active Text', 'dark_sidebarText', s.dark_sidebarText)}
+                    </div>
+
+                    <div id="design_guest" class="design-section" style="display:none;">
+                        <h4>Guest Login Page</h4>
+                        ${renderColorInput('Login Background', 'guestLoginBg', s.guestLoginBg)}
+                    </div>
+
+                    <div style="margin-top:20px;">
+                        <button class="confirm-btn" onclick="saveUIDesign()">Save All Changes</button>
+                    </div>
+                </div>
+
+                <!-- Preview -->
+                <div class="bill-card" style="flex:1; min-width:300px; position:sticky; top:20px; height:fit-content;">
+                    <h3>Live Preview</h3>
+                    <div id="previewContainer" style="border:1px solid #ccc; height:400px; display:flex; flex-direction:column; transition:all 0.3s;">
+                        <!-- Mock Dashboard -->
+                        <div style="flex:1; display:flex; overflow:hidden;">
+                            <div id="p_sidebar" style="width:150px; padding:10px; border-right:1px solid rgba(0,0,0,0.1); display:flex; flex-direction:column; gap:10px;">
+                                <div style="height:20px; width:80%; background:rgba(128,128,128,0.2); border-radius:4px;"></div>
+                                <div style="height:30px; width:100%; background:rgba(128,128,128,0.1); border-radius:4px;"></div>
+                                <div id="p_active_tab" style="height:30px; width:100%; border-radius:4px; display:flex; align-items:center; padding-left:10px; font-size:12px;">Active Tab</div>
+                                <div style="height:30px; width:100%; background:rgba(128,128,128,0.1); border-radius:4px;"></div>
+                            </div>
+                            <div id="p_main" style="flex:1; padding:20px;">
+                                <div style="margin-bottom:15px; font-size:18px; font-weight:bold;">Dashboard</div>
+                                <div id="p_card" style="padding:20px; border-radius:8px; box-shadow:0 2px 5px rgba(0,0,0,0.1);">
+                                    <h4 style="margin-top:0;">Card Title</h4>
+                                    <p style="font-size:12px; opacity:0.8;">This is how your content will look.</p>
+                                    <button id="p_btn" style="padding:8px 15px; border:none; border-radius:4px; cursor:pointer; color:white;">Primary Button</button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    <p style="font-size:12px; color:#666; margin-top:10px; text-align:center;">* Preview updates automatically as you change colors.</p>
+                </div>
+            </div>
+        `;
+        
+        // Initialize Preview
+        updateDesignPreview();
+
+    } catch (e) {
+        closeModal();
+        container.innerHTML = '<p>Failed to load UI settings.</p>';
+    }
+}
+
+async function saveUIDesign() {
+    const data = {
+        hotelName: getContextHotel(),
+        // Light
+        primaryColor: document.getElementById('primaryColor').value,
+        secondaryColor: document.getElementById('secondaryColor').value,
+        sidebarBg: document.getElementById('sidebarBg').value,
+        sidebarText: document.getElementById('sidebarText').value,
+        bgColor: document.getElementById('bgColor').value,
+        surfaceColor: document.getElementById('surfaceColor').value,
+        textColor: document.getElementById('textColor').value,
+        
+        // Dark
+        dark_primaryColor: document.getElementById('dark_primaryColor').value,
+        dark_secondaryColor: document.getElementById('dark_secondaryColor').value,
+        dark_sidebarBg: document.getElementById('dark_sidebarBg').value,
+        dark_sidebarText: document.getElementById('dark_sidebarText').value,
+        dark_bgColor: document.getElementById('dark_bgColor').value,
+        dark_surfaceColor: document.getElementById('dark_surfaceColor').value,
+        dark_textColor: document.getElementById('dark_textColor').value,
+
+        // Guest
+        guestLoginBg: document.getElementById('guestLoginBg').value
+    };
+
+    try {
+        showLoading("Saving UI settings...");
+        await fetch(`${API_BASE_URL}/ui-settings`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(data)
+        });
+        closeModal();
+        showToast("UI Settings saved! Reloading to apply...", 'success');
+        setTimeout(() => location.reload(), 1500);
+    } catch (e) {
+        closeModal();
+        showToast("Failed to save settings.", 'error');
+    }
 }
 
 async function saveScrollSpeed(speed) {

@@ -2,6 +2,67 @@
 
 const API_BASE_URL = '/api';
 
+// --- UI HELPERS (TOAST & LOADER) ---
+function injectStyles() {
+    if (document.getElementById('ui-styles')) return;
+    const style = document.createElement('style');
+    style.id = 'ui-styles';
+    style.innerHTML = `
+        #loadingOverlay {
+            position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(255, 255, 255, 0.8);
+            backdrop-filter: blur(5px);
+            z-index: 9999;
+            display: none; flex-direction: column; align-items: center; justify-content: center;
+            animation: fadeIn 0.3s ease;
+        }
+        .loader-spinner {
+            width: 50px; height: 50px; border: 5px solid #f3f3f3;
+            border-top: 5px solid #007bff; border-radius: 50%;
+            animation: spin 1s linear infinite; margin-bottom: 15px;
+        }
+        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+        @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+    `;
+    document.head.appendChild(style);
+}
+
+function showToast(message, type = 'success') {
+    let container = document.getElementById('toast-container');
+    if (!container) {
+        container = document.createElement('div');
+        container.id = 'toast-container';
+        container.style.cssText = 'position: fixed; top: 20px; right: 20px; z-index: 10000; display: flex; flex-direction: column; gap: 10px;';
+        document.body.appendChild(container);
+    }
+
+    const toast = document.createElement('div');
+    const bgColor = type === 'error' ? '#dc3545' : (type === 'info' ? '#17a2b8' : '#28a745');
+    const icon = type === 'error' ? 'fa-circle-exclamation' : (type === 'info' ? 'fa-circle-info' : 'fa-circle-check');
+    
+    toast.style.cssText = `background: ${bgColor}; color: white; padding: 15px 20px; border-radius: 8px; box-shadow: 0 10px 25px rgba(0,0,0,0.2); opacity: 0; transform: translateX(100%); transition: all 0.4s cubic-bezier(0.68, -0.55, 0.27, 1.55); min-width: 300px; display: flex; align-items: center; gap: 12px; font-size: 14px; font-weight: 500;`;
+    toast.innerHTML = `<i class="fa-solid ${icon}" style="font-size: 18px;"></i> <span>${message}</span>`;
+
+    container.appendChild(toast);
+
+    requestAnimationFrame(() => {
+        toast.style.opacity = '1';
+        toast.style.transform = 'translateX(0)';
+    });
+
+    let timeoutId;
+    const removeToast = () => {
+        toast.style.opacity = '0';
+        toast.style.transform = 'translateX(100%)';
+        setTimeout(() => toast.remove(), 300);
+    };
+
+    const startTimer = () => { timeoutId = setTimeout(removeToast, 3000); };
+    toast.addEventListener('mouseenter', () => clearTimeout(timeoutId));
+    toast.addEventListener('mouseleave', startTimer);
+    startTimer();
+}
+
 // --- STAFF LOGIN ---
 async function login() {
     const username = document.getElementById('loginUsername').value.trim();
@@ -27,7 +88,7 @@ async function login() {
             window.location.href = "dashboard.html";
         } else {
             const result = await response.json();
-            showModal(result.message || 'Invalid username or password.');
+            showToast(result.message || 'Invalid username or password.', 'error');
         }
     } catch (error) {
         console.error('Login failed:', error);
@@ -55,14 +116,16 @@ async function sendGuestOtp() {
             body: JSON.stringify({ email })
         });
         const result = await response.json();
-        showModal(result.message);
+        hideLoading();
+        showToast(result.message, response.ok ? 'success' : 'error');
         if (response.ok) {
             document.getElementById('guestStep1').style.display = 'none';
             document.getElementById('guestStep2').style.display = 'block';
             document.getElementById('guestOtp').focus();
         }
     } catch (error) {
-        showModal('Failed to send OTP. Please try again later.');
+        hideLoading();
+        showToast('Failed to send OTP. Please try again later.', 'error');
     }
 }
 
@@ -82,7 +145,8 @@ async function verifyGuestOtp() {
         const result = await response.json();
 
         if (result.success) {
-            showModal('OTP Verified!', () => showBookingModal());
+            showToast('OTP Verified!', 'success');
+            showBookingModal();
         } else {
             showModal(result.message || 'Verification failed.');
         }
@@ -456,7 +520,7 @@ async function bookRoomOnline() {
             `;
             document.getElementById('guestLoginForm').innerHTML = bookingConfirmation;
         } else {
-            showModal(result.message || 'Booking failed.');
+            showToast(result.message || 'Booking failed.', 'error');
         }
     } catch (error) {
         showModal('An error occurred while booking.');
@@ -509,7 +573,8 @@ async function sendForgotOtp() {
             body: JSON.stringify({ email })
         });
         const result = await response.json();
-        showModal(result.message);
+        hideLoading();
+        showToast(result.message, response.ok ? 'success' : 'error');
         
         if (response.ok) {
             document.getElementById('forgotOtpSection').style.display = 'block';
@@ -519,7 +584,8 @@ async function sendForgotOtp() {
             btn.onclick = verifyForgotOtp;
         }
     } catch (error) {
-        showModal('Failed to send OTP.');
+        hideLoading();
+        showToast('Failed to send OTP.', 'error');
     }
 }
 
@@ -535,11 +601,13 @@ async function verifyForgotOtp() {
             body: JSON.stringify({ email, otp })
         });
         const result = await response.json();
-        showModal(result.message);
+        hideLoading();
+        showToast(result.message, response.ok ? 'success' : 'error');
         if (response.ok) {
             closeForgotPasswordModal();
         }
     } catch (error) {
+        hideLoading();
         showModal('Verification failed.');
     }
 }
@@ -585,6 +653,8 @@ document.addEventListener('DOMContentLoaded', function() {
             }
         });
     }
+
+    injectStyles();
 
     // Populate the hotel selection dropdown on the guest form
     populateHotelsDropdown();
@@ -646,12 +716,26 @@ async function checkUrlForHotelSlug() {
     }
 
     try {
-        const response = await fetch(`${API_BASE_URL}/resolve-slug/${path}`);
+        const tch(`${API_BASE_URL}/ui-settings?hotelName=${encodeURIComponent(path.replace('.com', ''))}`) // Approximate lookup, ideally resolve-slug returns hotelName first
+        ]);
+        
         if (response.ok) {
             const data = await response.json();
             const hotelName = data.hotelName;
             const logo = data.logo;
             const themeColor = data.themeColor;
+
+            // Fetch UI settings specifically for this hotel now that we have the name
+            fetch(`${API_BASE_URL}/ui-settings?hotelName=${encodeURIComponent(hotelName)}`)
+                .then(res => res.json())
+                .then(ui => {
+                    if (ui.GUEST_LOGIN_BG) document.body.style.backgroundColor = ui.GUEST_LOGIN_BG;
+                    if (ui.PRIMARY_COLOR) {
+                        const style = document.createElement('style');
+                        style.innerHTML = `.main-btn, .confirm-btn, .auth-card button { background-color: ${ui.PRIMARY_COLOR} !important; border-color: ${ui.PRIMARY_COLOR} !important; }`;
+                        document.head.appendChild(style);
+                    }
+                }).catch(e => console.log("No custom UI settings"));
             
             // Switch to Guest Tab
             showForm('guestLoginForm');
@@ -758,14 +842,22 @@ function showModal(message, onConfirm = null) {
 }
 
 function showLoading(message) {
-    const modal = document.getElementById('actionModal');
-    const modalBox = document.getElementById('modalBox');
-    modalBox.innerHTML = `
-        <h3 style="margin-top: 0; color: #333;">Processing</h3>
-        <p style="color: #666; margin: 15px 0;">${message}</p>
-        <div class="loader"></div>
+    let overlay = document.getElementById('loadingOverlay');
+    if (!overlay) {
+        overlay = document.createElement('div');
+        overlay.id = 'loadingOverlay';
+        document.body.appendChild(overlay);
+    }
+    overlay.innerHTML = `
+        <div class="loader-spinner"></div>
+        <p style="font-size: 18px; color: #555; font-weight: 500;">${message}</p>
     `;
-    modal.style.display = 'flex';
+    overlay.style.display = 'flex';
+}
+
+function hideLoading() {
+    const overlay = document.getElementById('loadingOverlay');
+    if (overlay) overlay.style.display = 'none';
 }
 
 function closeModal() {

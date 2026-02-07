@@ -40,7 +40,7 @@ let menuPollInterval = null;
 
 async function verifyGuest() {
     const identifier = document.getElementById('guestIdentifierInput').value.trim();
-    if (!identifier) return alert('Please enter your registered email or mobile number.');
+    if (!identifier) return showToast('Please enter your registered email or mobile number.', 'error');
 
     try {
         const response = await fetch(`${API_BASE_URL}/guest/verify-dinein`, {
@@ -71,11 +71,11 @@ async function verifyGuest() {
             if (menuPollInterval) clearInterval(menuPollInterval);
             menuPollInterval = setInterval(() => renderMenu(true), 10000);
         } else {
-            alert(result.message || 'Guest not found. Please check your details.');
+            showToast(result.message || 'Guest not found. Please check your details.', 'error');
         }
     } catch (error) {
         console.error(error);
-        alert('Error verifying guest details.');
+        showToast('Error verifying guest details.', 'error');
     }
 }
 
@@ -120,7 +120,7 @@ function addToCart(id) {
     const item = MENU_ITEMS.find(i => i.ID === id);
     
     if (item.IS_AVAILABLE === 0) {
-        return showNotification('Out of Stock', 'Sorry, this item is currently unavailable.');
+        return showToast('Sorry, this item is currently unavailable.', 'error');
     }
 
     // Map DB columns to Cart format
@@ -131,6 +131,7 @@ function addToCart(id) {
     };
     cart.push(cartItem);
     updateCartUI();
+    showToast(`${item.NAME} added to order`, 'success');
 }
 
 function updateCartUI() {
@@ -148,7 +149,7 @@ function updateCartUI() {
 }
 
 async function placeOrder() {
-    if (!currentRoom) return alert('Room number missing.');
+    if (!currentRoom) return showToast('Room number missing.', 'error');
     
     const orderData = {
         roomNumber: currentRoom,
@@ -167,16 +168,16 @@ async function placeOrder() {
         });
 
         if (response.ok) { 
-            showNotification('Order Placed!', 'Your food is being prepared and will be charged to your room.');
+            showToast('Order Placed! Your food is being prepared.', 'success');
             cart = [];
             updateCartUI();
         } else {
             const result = await response.json();
-            showNotification('Error', result.message || 'Could not place order. Please try again.');
+            showToast(result.message || 'Could not place order. Please try again.', 'error');
         }
     } catch (error) {
         console.error(error);
-        showNotification('Error', 'Network error. Please try again.');
+        showToast('Network error. Please try again.', 'error');
     }
 }
 
@@ -189,7 +190,7 @@ async function submitServiceRequest() {
     const requestType = document.getElementById('serviceType').value;
     const comments = document.getElementById('serviceComments').value.trim();
 
-    if (!currentRoom) return alert('Room number missing. Please verify guest first.');
+    if (!currentRoom) return showToast('Room number missing. Please verify guest first.', 'error');
 
     try {
         const response = await fetch(`${API_BASE_URL}/service-requests`, {
@@ -201,17 +202,47 @@ async function submitServiceRequest() {
         const result = await response.json();
         document.getElementById('serviceModal').style.display = 'none';
         
-        showNotification(response.ok ? 'Request Sent' : 'Error', result.message);
+        showToast(result.message, response.ok ? 'success' : 'error');
     } catch (e) {
         console.error("Service Request Failed:", e);
-        showNotification('Network Error', 'Failed to send request.');
+        showToast('Failed to send request.', 'error');
     }
 }
 
-function showNotification(title, msg) {
-    document.getElementById('modalTitle').textContent = title;
-    document.getElementById('modalMsg').textContent = msg;
-    document.getElementById('notificationModal').style.display = 'flex';
+function showToast(message, type = 'success') {
+    let container = document.getElementById('toast-container');
+    if (!container) {
+        container = document.createElement('div');
+        container.id = 'toast-container';
+        container.style.cssText = 'position: fixed; top: 20px; right: 20px; z-index: 10000; display: flex; flex-direction: column; gap: 10px;';
+        document.body.appendChild(container);
+    }
+
+    const toast = document.createElement('div');
+    const bgColor = type === 'error' ? '#dc3545' : (type === 'info' ? '#17a2b8' : '#28a745');
+    const icon = type === 'error' ? 'fa-circle-exclamation' : (type === 'info' ? 'fa-circle-info' : 'fa-circle-check');
+    
+    toast.style.cssText = `background: ${bgColor}; color: white; padding: 15px 20px; border-radius: 8px; box-shadow: 0 10px 25px rgba(0,0,0,0.2); opacity: 0; transform: translateX(100%); transition: all 0.4s cubic-bezier(0.68, -0.55, 0.27, 1.55); min-width: 300px; display: flex; align-items: center; gap: 12px; font-size: 14px; font-weight: 500;`;
+    toast.innerHTML = `<i class="fa-solid ${icon}" style="font-size: 18px;"></i> <span>${message}</span>`;
+
+    container.appendChild(toast);
+
+    requestAnimationFrame(() => {
+        toast.style.opacity = '1';
+        toast.style.transform = 'translateX(0)';
+    });
+
+    let timeoutId;
+    const removeToast = () => {
+        toast.style.opacity = '0';
+        toast.style.transform = 'translateX(100%)';
+        setTimeout(() => toast.remove(), 300);
+    };
+
+    const startTimer = () => { timeoutId = setTimeout(removeToast, 3000); };
+    toast.addEventListener('mouseenter', () => clearTimeout(timeoutId));
+    toast.addEventListener('mouseleave', startTimer);
+    startTimer();
 }
 
 function injectContactButton() {
