@@ -27,9 +27,13 @@ npm install
 
 # 3. Configure Environment Variables
 # Create a .env file with your production details
-echo "DB_USER=admin" >> .env
-echo "DB_PASSWORD=secure_password" >> .env
-echo "DB_CONNECT_STRING=your_db_host:1521/SERVICE_NAME" >> .env
+echo "DB_USER=DMIN to that folder path.
+echo "TNS_ADMIN=C:\oracle\wallet" >> .env
+
+# 4. Set DB_CONNECT_STRING to the service name found in tnsnames.ora (inside the wallet)
+#    Example: myhoteldb_high
+echo "DB_CONNECT_STRING=myhoteldb_high" >> .env
+
 echo "PORT=80" >> .env
 echo "EMAIL_USER=hotel@example.com" >> .env
 echo "EMAIL_PASS=email_password" >> .env

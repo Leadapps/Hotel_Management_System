@@ -13,9 +13,13 @@ oracledb.fetchAsString = [oracledb.CLOB];
 
 // --- Oracle Instant Client Initialization ---
 try {
-  // For Windows (uncomment and adjust path if needed)
-  // oracledb.initOracleClient({ libDir: "C:\\oracle\\instantclient_21_3" });
+  let clientOpts = {};
+  // If using a Wallet (file for connection), point to the directory containing tnsnames.ora
+  if (process.env.TNS_ADMIN) {
+      clientOpts.configDir = process.env.TNS_ADMIN;
+  }
   
+  if (Object.keys(clientOpts).length > 0) oracledb.initOracleClient(clientOpts);
   console.log("Oracle Client initialization attempted.");
 } catch (err) {
   console.error("Oracle Instant Client initialization warning:", err.message);
@@ -25,7 +29,7 @@ try {
 // --- Database Connection Configuration ---
 const dbConfig = {
     user: process.env.DB_USER || "hotel_admin",
-    password: process.env.DB_PASSWORD || "myStrongPassword",
+    password: process.env.DB_PASSWORD || "YourStrongPassword123#",
     connectString: process.env.DB_CONNECT_STRING || "localhost:1521/XEPDB1"
 };
 
